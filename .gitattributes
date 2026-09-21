@@ -1,0 +1,19 @@
+# Keep shell scripts and source files as LF so they run on Linux even if the repo
+# was created or edited on Windows (prevents "/usr/bin/env bash^M: bad interpreter").
+*.sh      text eol=lf
+*.rs      text eol=lf
+*.py      text eol=lf
+*.toml    text eol=lf
+*.md      text eol=lf
+*.yml     text eol=lf
+*.yaml    text eol=lf
+Makefile  text eol=lf
+Dockerfile text eol=lf
+
+# Windows PowerShell scripts stay CRLF.
+*.ps1     text eol=crlf
+
+# Binary assets — never touch line endings.
+*.png     binary
+*.docx    binary
+*.pdf     binary

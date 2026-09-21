@@ -1,0 +1,18 @@
+# Keep the Docker build context small and reproducible. The image needs the
+# Cargo workspace sources, the analysis script (analysis/), and the docker/
+# reproduction entry script. Everything below is rebuilt inside the container or
+# is produced at run time.
+target/
+.venv/
+.git/
+logs/
+# results are produced at run time and mounted back to the host, so the raw
+# copies do not need to enter the build context.
+results/*.csv
+results/*.png
+results/*.md
+results/*.log
+**/*.rs.bk
+__pycache__/
+*.pyc
+.DS_Store

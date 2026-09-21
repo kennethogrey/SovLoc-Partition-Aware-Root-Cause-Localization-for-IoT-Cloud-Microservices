@@ -1,0 +1,19 @@
+[package]
+name = "sim"
+version = "0.1.0"
+edition = "2021"
+description = "Deterministic, seeded simulation harness comparing centralised vs decentralised RCA under network partition."
+license = "MIT"
+
+[[bin]]
+name = "sim"
+path = "src/main.rs"
+
+[dependencies]
+rca-core   = { path = "../rca-core" }
+rand       = { workspace = true }
+rand_distr = { workspace = true }
+serde      = { workspace = true }
+csv        = { workspace = true }
+clap       = { workspace = true }
+anyhow     = { workspace = true }

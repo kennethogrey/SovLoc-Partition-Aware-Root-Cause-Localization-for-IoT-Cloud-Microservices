@@ -1,0 +1,19 @@
+[package]
+name = "mesh"
+version = "0.1.0"
+edition = "2021"
+description = "Real networked microservice mesh + two live RCA collectors (cloud/edge) for the production-validation tier."
+license = "MIT"
+
+[[bin]]
+name = "mesh"
+path = "src/main.rs"
+
+[dependencies]
+rca-core   = { path = "../rca-core" }
+tokio      = { version = "1.40.0", features = ["rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }
+serde      = { workspace = true }
+serde_json = { workspace = true }
+clap       = { workspace = true }
+anyhow     = { workspace = true }
+rand       = { workspace = true }

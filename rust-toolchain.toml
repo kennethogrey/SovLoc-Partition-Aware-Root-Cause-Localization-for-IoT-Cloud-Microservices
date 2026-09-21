@@ -1,0 +1,5 @@
+# Pin the exact Rust toolchain so every machine and CI builds identically
+# (exam §4.4 "pin the environment, not 'works on my machine'").
+[toolchain]
+channel = "1.82.0"
+components = ["rustfmt", "clippy"]

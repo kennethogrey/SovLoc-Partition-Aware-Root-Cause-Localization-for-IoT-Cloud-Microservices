@@ -1,0 +1,65 @@
+name: ci
+
+# Re-runs the core suite on every push so a regression is caught immediately
+# rather than at write up time (exam section 4.4). One job runs the checks
+# directly, and a second job proves the Docker path a grader actually uses.
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@1.82.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and target
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('Cargo.lock') }}
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (warnings are errors)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Unit tests
+        run: cargo test --workspace
+
+      - name: Smoke benchmark (quick reproduction)
+        run: cargo run -p sim --release -- --quick --out-dir results
+
+      - name: Analysis (confidence intervals, table)
+        run: python3 analysis/analyze.py
+
+  docker-reproduce:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the reproduction image
+        run: docker build --target reproduce -t sovloc-reproduce .
+
+      - name: Run the full reproduction inside the container
+        run: |
+          mkdir -p results
+          docker run --rm -v "${{ github.workspace }}/results:/app/results" sovloc-reproduce
+
+      - name: Upload results as an artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sovloc-results
+          path: results/

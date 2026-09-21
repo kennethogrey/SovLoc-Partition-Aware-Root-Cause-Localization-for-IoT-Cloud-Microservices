@@ -1,0 +1,108 @@
+cloud-1  | [cloud] collector listening on 0.0.0.0:7000
+cloud-1  | [cloud] t+ -6.1s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ -4.1s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ -2.1s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ -0.1s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] top-1 = ingest (score 1.0000)
+cloud-1  | [cloud] top-1 = device-registry (score 0.5192)
+cloud-1  | [cloud] top-1 = store (score 0.3656)
+cloud-1  | [cloud] t+  1.9s  top-1=store           culprit(validate)=rank 4       visible=7/7
+cloud-1  | [cloud] top-1 = device-registry (score 0.5441)
+cloud-1  | [cloud] top-1 = alerting (score 0.4153)
+cloud-1  | [cloud] t+  3.9s  top-1=alerting        culprit(validate)=rank 5       visible=7/7
+cloud-1  | [cloud] top-1 = store (score 0.3161)
+cloud-1  | [cloud] top-1 = alerting (score 0.4211)
+edge-1   | [edge] collector listening on 0.0.0.0:7001
+cloud-1  | [cloud] top-1 = ingest (score 0.2940)
+cloud-1  | [cloud] top-1 = store (score 0.3368)
+edge-1   | [edge] t+ -6.3s  top-1=none            culprit(validate)=not visible  visible=0/7
+edge-1   | [edge] t+ -4.3s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+  5.9s  top-1=store           culprit(validate)=rank 5       visible=7/7
+cloud-1  | [cloud] top-1 = device-registry (score 0.2920)
+cloud-1  | [cloud] top-1 = alerting (score 0.3704)
+cloud-1  | [cloud] t+  7.9s  top-1=alerting        culprit(validate)=rank 7       visible=7/7
+cloud-1  | [cloud] top-1 = device-registry (score 0.3097)
+cloud-1  | [cloud] top-1 = alerting (score 0.4077)
+cloud-1  | [cloud] t+  9.9s  top-1=alerting        culprit(validate)=rank 5       visible=7/7
+cloud-1  | [cloud] top-1 = store (score 0.3484)
+cloud-1  | [cloud] top-1 = device-registry (score 0.4977)
+cloud-1  | [cloud] top-1 = store (score 0.3511)
+cloud-1  | [cloud] t+ 11.9s  top-1=store           culprit(validate)=rank 5       visible=7/7
+cloud-1  | [cloud] top-1 = alerting (score 0.3127)
+cloud-1  | [cloud] top-1 = device-registry (score 0.2783)
+cloud-1  | [cloud] t+ 13.9s  top-1=device-registry culprit(validate)=rank 4       visible=7/7
+cloud-1  | [cloud] top-1 = store (score 0.3370)
+cloud-1  | [cloud] top-1 = device-registry (score 0.4120)
+cloud-1  | [cloud] top-1 = validate (score 0.4358)
+cloud-1  | [cloud] t+ 15.9s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+cloud-1  | [cloud] LOCALIZATION_TIME_MS 353  (culprit=validate)
+cloud-1  | [cloud] t+ 17.9s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+cloud-1  | [cloud] top-1 = alerting (score 0.7333)
+cloud-1  | [cloud] t+ 19.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 21.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 23.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 25.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+edge-1   | [edge] t+ -2.3s  top-1=none            culprit(validate)=not visible  visible=0/7
+edge-1   | [edge] t+ -0.3s  top-1=none            culprit(validate)=not visible  visible=0/7
+edge-1   | [edge] top-1 = device-registry (score 0.6246)
+edge-1   | [edge] top-1 = store (score 0.4450)
+edge-1   | [edge] t+  1.7s  top-1=store           culprit(validate)=rank 4       visible=7/7
+cloud-1  | [cloud] t+ 27.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 29.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 31.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 33.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 35.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 37.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 39.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 41.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 43.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 45.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 47.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 49.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 51.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+cloud-1  | [cloud] t+ 53.9s  top-1=none            culprit(validate)=not visible  visible=0/7
+edge-1   | [edge] top-1 = alerting (score 0.3993)
+edge-1   | [edge] top-1 = store (score 0.3177)
+edge-1   | [edge] t+  3.7s  top-1=store           culprit(validate)=rank 6       visible=7/7
+edge-1   | [edge] top-1 = alerting (score 0.2721)
+edge-1   | [edge] top-1 = store (score 0.3453)
+edge-1   | [edge] top-1 = enrich (score 0.3538)
+edge-1   | [edge] t+  5.7s  top-1=enrich          culprit(validate)=rank 3       visible=7/7
+edge-1   | [edge] top-1 = device-registry (score 0.3147)
+edge-1   | [edge] top-1 = store (score 0.6274)
+edge-1   | [edge] top-1 = alerting (score 0.3298)
+edge-1   | [edge] t+  7.7s  top-1=alerting        culprit(validate)=rank 4       visible=7/7
+edge-1   | [edge] top-1 = device-registry (score 0.5426)
+edge-1   | [edge] top-1 = store (score 0.3521)
+edge-1   | [edge] top-1 = alerting (score 0.4589)
+edge-1   | [edge] t+  9.7s  top-1=alerting        culprit(validate)=rank 4       visible=7/7
+edge-1   | [edge] top-1 = device-registry (score 0.3495)
+edge-1   | [edge] top-1 = store (score 0.4419)
+edge-1   | [edge] top-1 = device-registry (score 0.3479)
+edge-1   | [edge] t+ 11.7s  top-1=device-registry culprit(validate)=rank 5       visible=7/7
+edge-1   | [edge] top-1 = alerting (score 0.3703)
+edge-1   | [edge] top-1 = device-registry (score 0.5323)
+edge-1   | [edge] t+ 13.7s  top-1=device-registry culprit(validate)=rank 3       visible=7/7
+edge-1   | [edge] top-1 = store (score 0.3802)
+edge-1   | [edge] top-1 = validate (score 0.3573)
+edge-1   | [edge] t+ 15.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] LOCALIZATION_TIME_MS 745  (culprit=validate)
+edge-1   | [edge] t+ 17.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 19.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 21.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 23.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 25.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 27.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 29.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 31.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 33.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 35.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 37.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 39.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 41.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 43.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 45.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 47.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 49.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 51.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+edge-1   | [edge] t+ 53.7s  top-1=validate        culprit(validate)=rank 1       visible=7/7

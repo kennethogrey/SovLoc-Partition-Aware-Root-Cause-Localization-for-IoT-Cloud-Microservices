@@ -1,0 +1,2 @@
+# This folder holds generated results (raw.csv, summary.csv, plots).
+# It is kept in git (via this file) but its generated contents are git-ignored.

@@ -1,0 +1,12 @@
+[package]
+name = "rca-core"
+version = "0.1.0"
+edition = "2021"
+description = "Non-AI root-cause localization: robust change-point scoring + personalized PageRank over a service dependency graph."
+license = "MIT"
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+# (unit tests use only std)

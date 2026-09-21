@@ -1,0 +1,153 @@
+# Local mesh run (scripts/run_mesh.sh validate 75): full cycle including recovery.
+# Fault at t+15s; demo cloud-link drop t+20s..t+60s. See heartbeats below.
+
+===== CLOUD =====
+[cloud] collector listening on 0.0.0.0:7000
+[cloud] t+ -1.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[cloud] t+  0.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[cloud] t+  2.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[cloud] t+  4.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[cloud] top-1 = store (score 0.3851)
+[cloud] top-1 = alerting (score 0.2873)
+[cloud] t+  6.5s  top-1=alerting        culprit(validate)=rank 5       visible=7/7
+[cloud] top-1 = device-registry (score 0.4730)
+[cloud] top-1 = store (score 0.3823)
+[cloud] t+  8.5s  top-1=store           culprit(validate)=rank 5       visible=7/7
+[cloud] top-1 = alerting (score 0.3422)
+[cloud] top-1 = ingest (score 0.4235)
+[cloud] top-1 = alerting (score 0.2512)
+[cloud] t+ 10.5s  top-1=alerting        culprit(validate)=rank 7       visible=7/7
+[cloud] top-1 = store (score 0.2670)
+[cloud] top-1 = device-registry (score 0.3944)
+[cloud] top-1 = alerting (score 0.3883)
+[cloud] t+ 12.5s  top-1=alerting        culprit(validate)=rank 4       visible=7/7
+[cloud] top-1 = ingest (score 0.3790)
+[cloud] top-1 = store (score 0.5368)
+[cloud] top-1 = alerting (score 0.4260)
+[cloud] t+ 14.5s  top-1=alerting        culprit(validate)=rank 4       visible=7/7
+[cloud] top-1 = validate (score 0.3985)
+[cloud] LOCALIZATION_TIME_MS 505  (culprit=validate)
+[cloud] t+ 16.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 18.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 20.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] top-1 = alerting (score 0.5459)
+[cloud] top-1 = store (score 0.9572)
+[cloud] t+ 22.5s  top-1=store           culprit(validate)=not visible  visible=3/7
+[cloud] t+ 24.5s  top-1=store           culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = alerting (score 0.9551)
+[cloud] top-1 = store (score 0.9110)
+[cloud] t+ 26.5s  top-1=store           culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = alerting (score 0.6263)
+[cloud] t+ 28.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.5289)
+[cloud] top-1 = enrich (score 0.4231)
+[cloud] t+ 30.5s  top-1=enrich          culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.5591)
+[cloud] top-1 = alerting (score 0.6618)
+[cloud] t+ 32.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.5703)
+[cloud] t+ 34.5s  top-1=store           culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = alerting (score 0.7667)
+[cloud] top-1 = store (score 0.4614)
+[cloud] top-1 = alerting (score 0.5183)
+[cloud] t+ 36.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.5318)
+[cloud] top-1 = alerting (score 0.5921)
+[cloud] top-1 = store (score 0.5873)
+[cloud] t+ 38.5s  top-1=store           culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = alerting (score 0.3897)
+[cloud] t+ 40.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.8492)
+[cloud] top-1 = alerting (score 0.5663)
+[cloud] t+ 42.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.5848)
+[cloud] top-1 = alerting (score 0.5790)
+[cloud] t+ 44.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.9220)
+[cloud] top-1 = alerting (score 0.7462)
+[cloud] t+ 46.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.7615)
+[cloud] top-1 = alerting (score 0.5494)
+[cloud] top-1 = store (score 0.6713)
+[cloud] top-1 = alerting (score 0.5553)
+[cloud] t+ 48.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.5245)
+[cloud] top-1 = alerting (score 0.5745)
+[cloud] t+ 50.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.6657)
+[cloud] top-1 = alerting (score 0.6451)
+[cloud] t+ 52.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.4937)
+[cloud] t+ 54.5s  top-1=store           culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = alerting (score 0.8410)
+[cloud] t+ 56.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.5592)
+[cloud] top-1 = alerting (score 0.5778)
+[cloud] top-1 = store (score 0.5925)
+[cloud] top-1 = alerting (score 0.7136)
+[cloud] t+ 58.5s  top-1=alerting        culprit(validate)=not visible  visible=3/7
+[cloud] top-1 = store (score 0.7010)
+[cloud] top-1 = validate (score 0.6414)
+[cloud] t+ 60.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 62.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 64.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 66.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 68.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 70.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[cloud] t+ 72.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+
+===== EDGE =====
+[edge] collector listening on 0.0.0.0:7001
+[edge] t+ -1.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[edge] t+  0.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[edge] t+  2.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[edge] t+  4.5s  top-1=none            culprit(validate)=not visible  visible=0/7
+[edge] top-1 = store (score 0.3851)
+[edge] top-1 = alerting (score 0.2873)
+[edge] t+  6.5s  top-1=alerting        culprit(validate)=rank 5       visible=7/7
+[edge] top-1 = device-registry (score 0.4730)
+[edge] top-1 = store (score 0.3823)
+[edge] t+  8.5s  top-1=store           culprit(validate)=rank 5       visible=7/7
+[edge] top-1 = alerting (score 0.3422)
+[edge] top-1 = ingest (score 0.4235)
+[edge] top-1 = alerting (score 0.2512)
+[edge] t+ 10.5s  top-1=alerting        culprit(validate)=rank 7       visible=7/7
+[edge] top-1 = store (score 0.2670)
+[edge] top-1 = device-registry (score 0.3944)
+[edge] top-1 = alerting (score 0.3883)
+[edge] t+ 12.5s  top-1=alerting        culprit(validate)=rank 4       visible=7/7
+[edge] top-1 = ingest (score 0.3790)
+[edge] top-1 = store (score 0.5368)
+[edge] top-1 = alerting (score 0.4260)
+[edge] t+ 14.5s  top-1=alerting        culprit(validate)=rank 4       visible=7/7
+[edge] top-1 = validate (score 0.3985)
+[edge] LOCALIZATION_TIME_MS 505  (culprit=validate)
+[edge] t+ 16.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 18.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 20.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 22.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 24.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 26.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 28.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 30.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 32.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 34.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 36.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 38.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 40.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 42.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 44.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 46.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 48.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 50.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 52.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 54.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 56.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 58.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 60.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 62.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 64.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 66.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 68.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 70.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 72.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7

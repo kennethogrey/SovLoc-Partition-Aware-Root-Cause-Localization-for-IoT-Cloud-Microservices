@@ -1,0 +1,23 @@
+# Rust build output
+/target
+**/*.rs.bk
+
+# The seeded experiment is deterministic (seed 42), so results/ is committed and
+# matches the tagged release. `make reproduce` regenerates the same numbers.
+# The raw csv, the summary, and analysis_summary.md are the authoritative
+# reproducible artifacts; the figures are regenerated from them.
+
+# Raw local mesh run logs. The captured trial runs that the report cites live in
+# results/*.log instead, so the noisy per-run logs stay out of git.
+/logs/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
