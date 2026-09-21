@@ -1,10 +1,13 @@
 # Real multi-container deployment of the mesh (production tier).
-# Start with:   ./scripts/compose_up.sh            (computes a shared clock zero)
-# Partition:    ./scripts/partition_docker.sh 40   (cuts the cloud collector 40s)
-# Degrade link: ./scripts/netem.sh sovloc-cloud add 200 10   (200ms +10% loss)
+# Scheduled fault:  make demo         (or ./scripts/compose_up.sh, faults validate)
+# Live injection:   make demo-live    (healthy start), then make inject SERVICE=store
+# Partition:        make partition    (cuts the cloud collector for 40s)
+# Degrade link:     make netem        (250ms delay, 8% loss, 512kbit on the cloud)
 #
 # The two collectors run the SAME rca-core. A partition of the `cloud` collector
-# reproduces the sovereignty result on real container networking.
+# reproduces the sovereignty result on real container networking. Every service
+# listens on control port 9100 and every collector on 9101, so `mesh inject` can
+# move the fault to any service while the mesh is running.
 
 name: sovloc
 
@@ -21,35 +24,35 @@ services:
     build:
       context: .
       target: runtime
-    command: ["collector","--name","cloud","--port","7000","--expect-culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15"]
+    command: ["collector","--name","cloud","--port","7000","--expect-culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--control-port","9101"]
     cap_add: ["NET_ADMIN"]
   edge:
     build:
       context: .
       target: runtime
-    command: ["collector","--name","edge","--port","7001","--expect-culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15"]
+    command: ["collector","--name","edge","--port","7001","--expect-culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--control-port","9101"]
 
   gateway:
     <<: *svc
-    command: ["service","--name","gateway","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001"]
+    command: ["service","--name","gateway","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001","--control-port","9100"]
   ingest:
     <<: *svc
-    command: ["service","--name","ingest","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001"]
+    command: ["service","--name","ingest","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001","--control-port","9100"]
   validate:
     <<: *svc
-    command: ["service","--name","validate","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001"]
+    command: ["service","--name","validate","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001","--control-port","9100"]
   device-registry:
     <<: *svc
-    command: ["service","--name","device-registry","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001"]
+    command: ["service","--name","device-registry","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001","--control-port","9100"]
   enrich:
     <<: *svc
-    command: ["service","--name","enrich","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001"]
+    command: ["service","--name","enrich","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001","--control-port","9100"]
   store:
     <<: *svc
-    command: ["service","--name","store","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001"]
+    command: ["service","--name","store","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001","--control-port","9100"]
   alerting:
     <<: *svc
-    command: ["service","--name","alerting","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001"]
+    command: ["service","--name","alerting","--culprit","${SOVLOC_CULPRIT:-validate}","--start-epoch-ms","${SOVLOC_EPOCH}","--fault-at-sec","15","--cloud","cloud:7000","--edge","edge:7001","--control-port","9100"]
 
 networks:
   default:

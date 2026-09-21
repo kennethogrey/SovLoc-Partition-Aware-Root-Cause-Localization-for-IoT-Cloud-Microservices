@@ -14,5 +14,9 @@ docker compose build
 export SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 ))   # 8s in the future
 export SOVLOC_CULPRIT="${1:-validate}"
 echo "Shared epoch = $SOVLOC_EPOCH   culprit = $SOVLOC_CULPRIT"
-echo "In another terminal now run: ./scripts/partition_docker.sh 40"
+if [ "$SOVLOC_CULPRIT" = "none" ]; then
+  echo "Healthy start. In another terminal inject a fault, e.g. make inject SERVICE=store"
+else
+  echo "In another terminal now run: make partition   (or ./scripts/partition_docker.sh 40)"
+fi
 docker compose up

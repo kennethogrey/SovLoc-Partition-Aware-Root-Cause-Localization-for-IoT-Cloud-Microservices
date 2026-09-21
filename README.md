@@ -115,6 +115,33 @@ During the real partition the cloud collector reports `visible=0/7` for the whol
 window while the edge collector holds the culprit at rank 1. That is the same
 result the simulation predicts, now on real container networking.
 
+Always bring the mesh up with `make demo` (or `make demo-live`), never with a bare
+`docker compose up`. The `make` targets set the shared clock. Without it the
+services fall back to no clock, start healthy, and the scheduled fault does not
+fire.
+
+## Moving the fault live
+
+You can also start the mesh healthy and inject a fault into any service while it
+runs, then watch the localizer move its top-1 onto that service in real time.
+
+```bash
+make demo-live                 # brings up the mesh with no fault
+# wait about ten seconds for the collectors to freeze a clean baseline, then:
+make inject SERVICE=store      # fault store now
+make inject SERVICE=gateway    # move the fault to gateway
+make clear                     # heal, back to no fault
+```
+
+Within a second or two of an injection both collectors print
+`top-1 = <service>`, the heartbeat shows `culprit(<service>)=rank 1`, and a fresh
+`LOCALIZATION_TIME_MS` line reports how long the localizer took to lock on. The
+`make partition` and `make netem` commands work on this live mesh too, so you can
+inject a fault and then cut the link and watch the edge hold the culprit while the
+cloud goes blind. Under the hood, `make inject` runs `mesh inject` inside the
+`cloud` container, which reaches every service on its control port over the
+compose network.
+
 ## Running one part at a time
 
 If you want just the experiment or just the tests, run them inside the
