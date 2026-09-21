@@ -201,14 +201,35 @@ reconnection promptly on heal, so the container logs show the partition and the
 cloud going blind but not the recovery. The local process mesh shows the full
 cycle including recovery.
 
+## Reproducibility package checklist
+
+This repository is the reproducibility package the exam asks for. Each required
+item and where it is satisfied:
+
+| Requirement | Where it is satisfied |
+|---|---|
+| Public repository with a tagged release matching the manuscript results | this repository, tag `v1.0-midterm`, with `results/` matching the numbers in the manuscript |
+| A single documented reproduction command from a clean checkout | `./run.sh` (or `make`), see "The one command" above |
+| A Dockerfile pinning the exact toolchain and dependency versions | `Dockerfile` (Rust 1.82.0), `rust-toolchain.toml`, and the committed `Cargo.lock` |
+| Raw experimental data and the analysis script, not only the plots | `results/raw.csv` and `results/summary.csv`, analysed by `analysis/analyze.py` |
+| A README stating required hardware, expected runtime, and known deviations | the Requirements, Expected runtime, and Known deviations sections above |
+
 ## Release
 
 The tagged release `v1.0-midterm` matches the numbers reported in the submitted
-manuscript. Clone and reproduce:
+manuscript. To reproduce from the tag:
 
 ```bash
-git clone https://github.com/<your-username>/sovloc.git
+git clone https://github.com/kennethogrey/SovLoc-Partition-Aware-Root-Cause-Localization-for-IoT-Cloud-Microservices.git sovloc
 cd sovloc
 git checkout v1.0-midterm
 ./run.sh
+```
+
+The tag is annotated and placed on the commit whose `results/` match the
+manuscript:
+
+```bash
+git tag -a v1.0-midterm -m "MCS 7101 midterm submission"
+git push origin v1.0-midterm
 ```
