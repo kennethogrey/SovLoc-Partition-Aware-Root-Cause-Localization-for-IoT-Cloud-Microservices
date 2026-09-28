@@ -120,6 +120,55 @@ Always bring the mesh up with `make demo` (or `make demo-live`), never with a ba
 services fall back to no clock, start healthy, and the scheduled fault does not
 fire.
 
+## Running the real Internet test on Crane Cloud
+
+A third tier separates the two sides across the public Internet. The cloud
+collector runs on Crane Cloud and the edge stays on this machine, so the
+partition is a real cut of a real wide area link rather than a container
+disconnect on one host. The full runbook is in `scripts/cranecloud/README.md`.
+The commands below each start from the project directory, so they run from
+wherever your shell happens to be. Replace `<dockerhub-user>` with your Docker
+Hub username and `<app>.cranecloud.io` with the public URL your Crane Cloud app
+is given.
+
+Build the image and push it to Docker Hub (this needs your Docker Hub login):
+
+```bash
+cd /home/ogrey/Development/masters/sovloc && DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v1
+```
+
+Deploy it on Crane Cloud as a single application, with image
+`<dockerhub-user>/sovloc-mesh:v1`, port `8080`, the entry command left blank, and
+one replica. When it is running, copy its public URL and confirm it is reachable
+across the Internet:
+
+```bash
+cd /home/ogrey/Development/masters/sovloc && ./scripts/cranecloud/probe.sh https://<app>.cranecloud.io
+```
+
+Run the mesh across the Internet. The edge collector and the seven services run
+here and stream their telemetry to the Crane Cloud collector, and both sides are
+captured under `results/`:
+
+```bash
+cd /home/ogrey/Development/masters/sovloc && ./scripts/cranecloud/run_edge_local.sh http://<app>.cranecloud.io validate 200
+```
+
+In a second terminal, cut the real link to the cloud for 60 seconds and then heal
+it, which is a genuine partition of the wide area path (this needs sudo, because
+it changes the routing table):
+
+```bash
+cd /home/ogrey/Development/masters/sovloc && sudo ./scripts/cranecloud/partition_link.sh http://<app>.cranecloud.io 45 60
+```
+
+During the cut the Crane Cloud collector is unreachable and its view falls to
+zero of seven services, while the edge collector holds the culprit at rank one
+with all seven services visible, and the cloud collector recovers once the link
+heals. The captured run this repository ships is
+`results/production_crane_cloud_edge.log` for the edge collector and
+`results/production_crane_cloud_status.csv` for the Crane Cloud collector.
+
 ## Moving the fault live
 
 You can also start the mesh healthy and inject a fault into any service while it
@@ -165,6 +214,7 @@ docker run --rm -v "$PWD/results:/app/results" sovloc-reproduce python3 analysis
 | `analysis/analyze.py` | confidence intervals, effect sizes, and the two plots from `results/raw.csv`, standard library plus matplotlib |
 | `Dockerfile`, `docker/reproduce.sh` | the reproduction image and the in container reproduction steps |
 | `docker-compose.yml`, `scripts/` | the real multi container deployment, the real partition, and the tc and netem degradation |
+| `scripts/cranecloud/` | the real-Internet tier: deploy the cloud collector to Crane Cloud, keep the edge local, and run the mesh across the real network (see its `README.md`) |
 | `.github/workflows/ci.yml` | the pipeline that re-runs the suite on every push |
 | `results/` | the committed raw data and figures, and the two captured real run logs |
 
@@ -183,13 +233,18 @@ The simulation numbers are modelled, with the assumptions documented in
 a physical measurement. No performance number is invented. Every figure and table
 comes from the one command above.
 
-One trial is deliberately left outside this repository. The exam asks for at
-least one trial over a genuinely uncontrolled degraded network, a real rural or
-mobile data link that was not synthesized with tc and netem. That trial needs a
-real weak connection that cannot be scripted, so it is run by hand and written up
-as a limitation in the manuscript. The in process partition, the real Docker
-partition, and the tc and netem degradation in this repository are all real
-network validation, but they are conditions that were created and controlled.
+The in process partition, the real Docker partition, and the tc and netem
+degradation in this repository are all real network validation, but they run on
+one machine and the conditions are created and controlled.
+
+The real-Internet tier closes that gap. `scripts/cranecloud/` deploys the cloud
+collector to Crane Cloud and keeps the edge side local, so telemetry crosses the
+real Internet, and the exam's uncontrolled degraded-link trial is run over a real
+weak uplink such as a mobile hotspot, with the link trace logged. The tooling and
+the procedure live in this repository; the measured numbers from a run are saved
+under `results/realnet_*` and written into the manuscript only once the run has
+actually been done. No performance number is invented, and any result not yet
+measured is marked pending rather than filled in.
 
 ## Known deviations
 

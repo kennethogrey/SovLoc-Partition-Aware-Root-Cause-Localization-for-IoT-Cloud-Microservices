@@ -10,7 +10,7 @@ resolver = "2"
 members = [
     "crates/rca-core",   # the non-AI RCA algorithms (the scientific heart)
     "crates/sim",        # deterministic seeded simulation harness (headline results)
-    "crates/mesh",       # the real tonic/gRPC microservice mesh (production tier)
+    "crates/mesh",       # the real networked mesh (tokio TCP, + optional HTTP for the Crane Cloud tier)
 ]
 
 # Versions are PINNED on purpose (exam §4.4 "reproducibility": pin, don't say

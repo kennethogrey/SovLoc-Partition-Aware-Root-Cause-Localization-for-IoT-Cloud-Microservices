@@ -26,6 +26,7 @@
 //! services start healthy and wait for an injection, rather than mis-scheduling a
 //! fault. See the README and `scripts/` for launch and partition helpers.
 
+mod http1;
 mod model;
 
 use std::collections::HashMap;
@@ -119,6 +120,13 @@ struct CollectorArgs {
     /// Port to listen on for control messages from `inject`.
     #[arg(long, default_value_t = COLLECTOR_CONTROL_PORT)]
     control_port: u16,
+    /// Optional plain HTTP/1.1 ingress port for the wide-area (Crane Cloud) tier,
+    /// where the platform exposes an HTTP ingress instead of a raw TCP port. When
+    /// set, this serves `POST /telemetry`, `POST /control`, and `GET /healthz` on
+    /// the given port, folding both telemetry and inject control onto the single
+    /// port the platform can expose. Unset means raw-TCP only (local/Docker tiers).
+    #[arg(long)]
+    http_port: Option<u16>,
     /// The known injected culprit (for automatic localization-time reporting).
     /// "none" or empty means start healthy and wait for an injection.
     #[arg(long)]
@@ -160,6 +168,15 @@ struct ServiceArgs {
     /// Edge collector address (host:port).
     #[arg(long)]
     edge: Option<String>,
+    /// Optional wide-area cloud collector as a plain HTTP base URL for the Crane
+    /// Cloud tier, e.g. `http://sovloc-xyz.cranecloud.io`. When set, each metric
+    /// is also POSTed to `<url>/telemetry`. This is the cloud link in the WAN
+    /// experiment; `--edge` (raw TCP) stays the local edge link. A dedicated task
+    /// streams each sample over one keep-alive connection via a small bounded
+    /// channel, so a blackholed cloud link never stalls the loop or starves the
+    /// edge collector, which is exactly the partition behaviour.
+    #[arg(long)]
+    http_cloud: Option<String>,
     /// Report period in ms.
     #[arg(long, default_value_t = 200)]
     period_ms: u64,
@@ -191,6 +208,12 @@ struct InjectArgs {
     /// Collector control targets, comma separated host:port list.
     #[arg(long, default_value = "cloud:9101,edge:9101")]
     collectors: String,
+    /// Optional wide-area collector control endpoints as plain HTTP base URLs,
+    /// comma separated (Crane Cloud tier), e.g. `http://sovloc-xyz.cranecloud.io`.
+    /// Each gets a `POST <url>/control`, so a fault can be injected into a remote
+    /// collector through the single port the platform exposes.
+    #[arg(long)]
+    http_collectors: Option<String>,
     /// Lead time in ms so every target starts the fault at the same instant.
     #[arg(long, default_value_t = 500)]
     lead_ms: u64,
@@ -233,6 +256,13 @@ struct Ctx {
     fault_t0_ms: AtomicU64,
     localized: AtomicBool,
     start_ms: u128,
+    // Latest snapshot for the read-only GET /status endpoint, so a remote poller
+    // can record the collector's live view (visible count, top-1, localization
+    // time) into a file without scraping platform console logs. Updated once per
+    // RCA tick; never read by the RCA method itself.
+    viz: AtomicU64,
+    top: Mutex<Option<usize>>,
+    loc_ms: AtomicU64,
 }
 
 async fn run_collector(a: CollectorArgs) -> Result<()> {
@@ -265,6 +295,9 @@ async fn run_collector(a: CollectorArgs) -> Result<()> {
         fault_t0_ms: AtomicU64::new(init_t0 as u64),
         localized: AtomicBool::new(false),
         start_ms: now_ms(),
+        viz: AtomicU64::new(0),
+        top: Mutex::new(None),
+        loc_ms: AtomicU64::new(0),
     });
 
     match init_expect {
@@ -278,6 +311,12 @@ async fn run_collector(a: CollectorArgs) -> Result<()> {
     }
 
     spawn_collector_control(ctx.clone(), a.control_port);
+
+    // Optional wide-area HTTP ingress (Crane Cloud tier). Only spawned when the
+    // flag is set; the raw-TCP telemetry and control paths above are unchanged.
+    if let Some(hp) = a.http_port {
+        spawn_http_ingress(ctx.clone(), hp);
+    }
 
     // Periodic RCA loop.
     {
@@ -307,6 +346,12 @@ async fn run_collector(a: CollectorArgs) -> Result<()> {
                 }
                 let ranked = localize(&ctx.graph, &anomaly, &visible, &RcaConfig::default());
                 let top_service = ranked.first().map(|r| r.service);
+                // Publish the live snapshot for GET /status.
+                ctx.viz.store(
+                    visible.iter().filter(|&&v| v).count() as u64,
+                    Ordering::SeqCst,
+                );
+                *ctx.top.lock().unwrap() = top_service;
                 if let Some(top) = ranked.first() {
                     if last_top != Some(top.service) {
                         last_top = Some(top.service);
@@ -337,6 +382,7 @@ async fn run_collector(a: CollectorArgs) -> Result<()> {
                         && !ctx.localized.swap(true, Ordering::SeqCst)
                     {
                         let dt = run_start_ms.saturating_sub(t0);
+                        ctx.loc_ms.store(dt as u64, Ordering::SeqCst);
                         println!(
                             "[{}] LOCALIZATION_TIME_MS {}  (culprit={})",
                             ctx.name,
@@ -417,25 +463,7 @@ fn spawn_collector_control(ctx: Arc<Ctx>, port: u16) {
                     let Ok(c) = serde_json::from_str::<CollectorControl>(&line) else {
                         continue;
                     };
-                    let new_idx = c
-                        .expect_culprit
-                        .as_deref()
-                        .filter(|s| !is_none_name(s))
-                        .and_then(|s| ctx.graph.index_of(s));
-                    *ctx.expect_idx.lock().unwrap() = new_idx;
-                    ctx.fault_t0_ms
-                        .store(c.fault_at_ms as u64, Ordering::SeqCst);
-                    ctx.localized.store(false, Ordering::SeqCst);
-                    match new_idx {
-                        Some(i) => {
-                            println!(
-                                "[{}] now expecting culprit = {}",
-                                ctx.name,
-                                ctx.graph.name(i)
-                            )
-                        }
-                        None => println!("[{}] fault cleared, back to healthy", ctx.name),
-                    }
+                    apply_collector_control(&ctx, &c);
                 }
             });
         }
@@ -453,26 +481,155 @@ async fn handle_conn(stream: TcpStream, ctx: Arc<Ctx>) -> Result<()> {
             Ok(m) => m,
             Err(_) => continue,
         };
-        let Some(idx) = ctx.graph.index_of(&m.service) else {
-            continue;
-        };
-        let mut st = ctx.state.lock().unwrap();
-        let entry = st.entry(idx).or_insert_with(|| ServiceState {
-            baseline: Vec::new(),
-            frozen: false,
-            latest: m.value,
-            last_seen: m.ts_ms,
-        });
-        entry.latest = m.value;
-        entry.last_seen = m.ts_ms;
-        if !entry.frozen {
-            entry.baseline.push(m.value);
-            if entry.baseline.len() >= ctx.baseline_n {
-                entry.frozen = true;
-            }
-        }
+        ingest_metric(&ctx, &m);
     }
     Ok(())
+}
+
+/// Fold one telemetry sample into the collector state: refresh the service's
+/// latest value and last-seen time, and extend the pre-fault baseline until it
+/// freezes. Shared by the raw-TCP path (`handle_conn`) and the HTTP path
+/// (`spawn_http_ingress`) so both transports measure identically.
+fn ingest_metric(ctx: &Ctx, m: &Metric) {
+    let Some(idx) = ctx.graph.index_of(&m.service) else {
+        return;
+    };
+    let mut st = ctx.state.lock().unwrap();
+    let entry = st.entry(idx).or_insert_with(|| ServiceState {
+        baseline: Vec::new(),
+        frozen: false,
+        latest: m.value,
+        last_seen: m.ts_ms,
+    });
+    entry.latest = m.value;
+    entry.last_seen = m.ts_ms;
+    if !entry.frozen {
+        entry.baseline.push(m.value);
+        if entry.baseline.len() >= ctx.baseline_n {
+            entry.frozen = true;
+        }
+    }
+}
+
+/// Apply an inject control message to the collector: switch the expected culprit,
+/// reset the localization timer to the new fault time, and re-arm the one-shot
+/// localization report. Shared by the raw-TCP control path and the HTTP path.
+fn apply_collector_control(ctx: &Ctx, c: &CollectorControl) {
+    let new_idx = c
+        .expect_culprit
+        .as_deref()
+        .filter(|s| !is_none_name(s))
+        .and_then(|s| ctx.graph.index_of(s));
+    *ctx.expect_idx.lock().unwrap() = new_idx;
+    ctx.fault_t0_ms
+        .store(c.fault_at_ms as u64, Ordering::SeqCst);
+    ctx.localized.store(false, Ordering::SeqCst);
+    match new_idx {
+        Some(i) => println!(
+            "[{}] now expecting culprit = {}",
+            ctx.name,
+            ctx.graph.name(i)
+        ),
+        None => println!("[{}] fault cleared, back to healthy", ctx.name),
+    }
+}
+
+/// Build the read-only JSON body for `GET /status` from the latest snapshot, so
+/// a remote poller can log the collector's live view over time. Data only; it
+/// never feeds back into the RCA method.
+fn status_json(ctx: &Ctx) -> String {
+    let visible = ctx.viz.load(Ordering::SeqCst);
+    let top1 = ctx
+        .top
+        .lock()
+        .unwrap()
+        .map(|i| format!("\"{}\"", ctx.graph.name(i)))
+        .unwrap_or_else(|| "null".to_string());
+    let expect = ctx
+        .expect_idx
+        .lock()
+        .unwrap()
+        .map(|i| format!("\"{}\"", ctx.graph.name(i)))
+        .unwrap_or_else(|| "null".to_string());
+    let localized_ms = if ctx.localized.load(Ordering::SeqCst) {
+        ctx.loc_ms.load(Ordering::SeqCst).to_string()
+    } else {
+        "null".to_string()
+    };
+    let t_rel = (now_ms().saturating_sub(ctx.start_ms)) as f64 / 1000.0;
+    format!(
+        "{{\"name\":\"{}\",\"visible\":{},\"n\":{},\"top1\":{},\"expect\":{},\"localized_ms\":{},\"t_rel_s\":{:.1}}}\n",
+        ctx.name, visible, ctx.graph.n, top1, expect, localized_ms, t_rel
+    )
+}
+
+/// Serve the wide-area HTTP ingress: `POST /telemetry` (one `Metric` JSON body),
+/// `POST /control` (one `CollectorControl` JSON body), and `GET /healthz`. It
+/// reuses the same state helpers as the TCP path, so the localizer behaves the
+/// same whether telemetry arrives over raw TCP or over the platform ingress.
+fn spawn_http_ingress(ctx: Arc<Ctx>, port: u16) {
+    tokio::spawn(async move {
+        let listener = match TcpListener::bind(("0.0.0.0", port)).await {
+            Ok(l) => l,
+            Err(e) => {
+                eprintln!("[{}] http ingress port {port} unavailable: {e}", ctx.name);
+                return;
+            }
+        };
+        println!(
+            "[{}] http ingress on 0.0.0.0:{port} (POST /telemetry, POST /control, GET /healthz)",
+            ctx.name
+        );
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let ctx = ctx.clone();
+            tokio::spawn(async move {
+                // Keep-alive: serve requests on this connection until the client
+                // closes it, so a streaming sender reuses one connection.
+                while let Some(req) = http1::read_request(&mut stream).await {
+                    match (req.method.as_str(), req.path.as_str()) {
+                        ("GET", "/healthz") | ("GET", "/") => {
+                            http1::write_response(&mut stream, "200 OK", "ok\n").await;
+                        }
+                        ("GET", "/status") => {
+                            http1::write_response(&mut stream, "200 OK", &status_json(&ctx)).await;
+                        }
+                        ("POST", "/telemetry") => {
+                            if let Ok(m) = serde_json::from_slice::<Metric>(&req.body) {
+                                ingest_metric(&ctx, &m);
+                                http1::write_response(&mut stream, "204 No Content", "").await;
+                            } else {
+                                http1::write_response(
+                                    &mut stream,
+                                    "400 Bad Request",
+                                    "bad metric\n",
+                                )
+                                .await;
+                            }
+                        }
+                        ("POST", "/control") => {
+                            if let Ok(c) = serde_json::from_slice::<CollectorControl>(&req.body) {
+                                apply_collector_control(&ctx, &c);
+                                http1::write_response(&mut stream, "200 OK", "ok\n").await;
+                            } else {
+                                http1::write_response(
+                                    &mut stream,
+                                    "400 Bad Request",
+                                    "bad control\n",
+                                )
+                                .await;
+                            }
+                        }
+                        _ => {
+                            http1::write_response(&mut stream, "404 Not Found", "not found\n").await
+                        }
+                    }
+                }
+            });
+        }
+    });
 }
 
 // ------------------------------------------------------------------ service --
@@ -551,6 +708,31 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
     let mut edge_conn: Option<TcpStream> = None;
     let mut ticker = tokio::time::interval(Duration::from_millis(a.period_ms));
 
+    // Wide-area cloud sender: a dedicated task owns one keep-alive connection and
+    // streams telemetry to the Crane Cloud collector, so the main loop never
+    // blocks on the WAN link. A small bounded channel sheds samples while the link
+    // is down instead of flooding stale telemetry on heal.
+    let cloud_tx = a.http_cloud.as_ref().and_then(|base| {
+        let mut sender = http1::HttpSender::new(base)?;
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
+        tokio::spawn(async move {
+            while let Some(line) = rx.recv().await {
+                let _ = tokio::time::timeout(
+                    Duration::from_millis(1500),
+                    sender.post("/telemetry", &line),
+                )
+                .await;
+            }
+        });
+        Some(tx)
+    });
+    if a.http_cloud.is_some() && cloud_tx.is_none() {
+        eprintln!(
+            "[service {}] --http-cloud must be a plain http:// url; cloud telemetry disabled",
+            a.name
+        );
+    }
+
     loop {
         ticker.tick().await;
         let now = now_ms();
@@ -580,6 +762,14 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
         if let Some(addr) = &a.cloud {
             if !cloud_dropped {
                 send_line(addr, &mut cloud_conn, &line).await;
+            }
+        }
+        // Wide-area cloud link (Crane Cloud): hand the sample to the streaming
+        // sender without blocking; drop it if the channel is full (link slow or
+        // partitioned), which is the partition behaviour the study measures.
+        if let Some(tx) = &cloud_tx {
+            if !cloud_dropped {
+                let _ = tx.try_send(line.clone());
             }
         }
         if let Some(addr) = &a.edge {
@@ -691,6 +881,26 @@ async fn run_inject(a: InjectArgs) -> Result<()> {
             fault_at_ms: at_ms,
         })?;
         send_control(target, &msg).await;
+    }
+    // Wide-area collectors (Crane Cloud) reached over HTTP through the one
+    // exposed port, folding inject control onto the same ingress as telemetry.
+    if let Some(list) = &a.http_collectors {
+        let msg = serde_json::to_string(&CollectorControl {
+            expect_culprit: culprit.clone(),
+            fault_at_ms: at_ms,
+        })?;
+        for base in list.split(',').map(str::trim).filter(|t| !t.is_empty()) {
+            match tokio::time::timeout(
+                Duration::from_millis(5000),
+                http1::post_json(base, "/control", &msg),
+            )
+            .await
+            {
+                Ok(Ok(())) => println!("control sent to {base}/control"),
+                Ok(Err(e)) => eprintln!("could not reach {base}: {e}"),
+                Err(_) => eprintln!("timed out reaching {base}"),
+            }
+        }
     }
 
     match &culprit {

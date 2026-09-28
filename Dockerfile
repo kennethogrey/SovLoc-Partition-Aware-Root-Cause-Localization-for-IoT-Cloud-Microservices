@@ -27,10 +27,16 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 ENTRYPOINT ["bash", "docker/reproduce.sh"]
 
-# ---- runtime: the mesh binary for the docker-compose production tier --------
+# ---- runtime: the mesh binary for the docker-compose production tier and the
+#      Crane Cloud real-Internet tier ------------------------------------------
+# The entrypoint runs the cloud collector by default (no arguments needed), so
+# the image deploys on Crane Cloud as a single app with the entry command left
+# blank; docker-compose still passes its own `command:` through unchanged.
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update \
  && apt-get install -y --no-install-recommends iproute2 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/release/mesh /usr/local/bin/mesh
-ENTRYPOINT ["mesh"]
+COPY docker/mesh-entrypoint.sh /usr/local/bin/mesh-entrypoint.sh
+RUN chmod +x /usr/local/bin/mesh-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/mesh-entrypoint.sh"]

@@ -11,6 +11,12 @@
 # results/*.log instead, so the noisy per-run logs stay out of git.
 /logs/
 
+# Timestamped per-run captures from the Crane Cloud real-Internet trials. The
+# authoritative captured run is committed as results/production_crane_cloud_*.
+/results/realnet_edge_validate_*.log
+/results/realnet_cloud_status_validate_*.csv
+/results/realnet_linktrace_*
+
 # Python
 __pycache__/
 *.pyc
