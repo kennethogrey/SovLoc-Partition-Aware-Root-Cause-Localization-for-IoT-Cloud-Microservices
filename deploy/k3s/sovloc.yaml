@@ -1,102 +1,93 @@
-# SovLoc on k3s: the SAME seven-service split deployed across nodes, so the cloud
-# side is genuinely remote from the edge side. This fixes the review's objection
-# that "the cloud sees 0 of 7" was guaranteed by keeping all services on one host.
+# SovLoc cloud half on k3s. The three cloud microservices (enrich, store, alerting)
+# and the cloud collector run on the k3s cluster, genuinely remote from the edge
+# half (the four edge services + edge collector, driven by scripts/e6/run_events.sh
+# on the harness host). The cloud services report to the cloud collector inside the
+# cluster, so an edge->cloud partition (a route black-hole from the harness host to
+# the cloud collector's NodePort) still leaves the cloud collector seeing its three
+# local cloud services (3/7). "Cloud sees 0/7" is therefore a measured outcome of
+# the cut, not a topology guarantee -- the review's central E6 objection.
 #
-# Prerequisites (run on your k3s cluster):
-#   kubectl label node <edge-node>  sovloc-role=edge
-#   kubectl label node <cloud-node> sovloc-role=cloud
-#   # set the image you pushed with scripts/cranecloud/build_and_push.sh:
-#   #   image: <your-registry>/sovloc-mesh:<tag>
+# Deploy:
+#   kubectl label node <cloud-node> sovloc-role=cloud          # optional pinning
+#   sed -i "s#IMAGE_PLACEHOLDER#<your-registry>/sovloc-mesh:<tag>#g" deploy/k3s/sovloc.yaml
+#   kubectl apply -f deploy/k3s/sovloc.yaml
+#   kubectl get svc cloud-collector      # note the NodePort (http 30080)
+#   # the harness host then uses CLOUD_URL=http://<any-node-ip>:30080
+# See RUNBOOK.md for the full E6 procedure.
 #
-# Edge services (gateway, ingest, validate, device-registry) + the edge collector
-# land on the edge node; cloud services (enrich, store, alerting) + the cloud
-# collector land on the cloud node. Every service streams to BOTH collectors, so a
-# partition between the nodes delays delivery exactly as in the simulation.
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: sovloc-config
-data:
-  IMAGE: "REPLACE_ME/sovloc-mesh:latest"
-  PERIOD_MS: "200"
-  STALE_MS: "3000"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: edge-collector
-spec:
-  selector: { app: edge-collector }
-  ports:
-    - { name: telemetry, port: 7001, targetPort: 7001 }
-    - { name: control,   port: 9201, targetPort: 9201 }
----
+# If instead you deploy BOTH halves in the cluster, add the edge Deployments and use
+# scripts/e6/cut_k3s.sh (deploy/k3s/partition-netpol.yaml) for an in-cluster cut.
 apiVersion: v1
 kind: Service
 metadata:
   name: cloud-collector
 spec:
+  type: NodePort
   selector: { app: cloud-collector }
   ports:
-    - { name: http,    port: 8080, targetPort: 8080 }
+    - { name: http,    port: 8080, targetPort: 8080, nodePort: 30080 }
     - { name: control, port: 9200, targetPort: 9200 }
 ---
 apiVersion: apps/v1
 kind: Deployment
-metadata:
-  name: edge-collector
-spec:
-  replicas: 1
-  selector: { matchLabels: { app: edge-collector } }
-  template:
-    metadata: { labels: { app: edge-collector } }
-    spec:
-      nodeSelector: { sovloc-role: edge }
-      containers:
-        - name: collector
-          image: REPLACE_ME/sovloc-mesh:latest
-          args: ["collector","--name","edge","--port","7001","--control-port","9201","--stale-ms","3000"]
-          ports: [{ containerPort: 7001 }, { containerPort: 9201 }]
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cloud-collector
+metadata: { name: cloud-collector }
 spec:
   replicas: 1   # exactly one: a stateful central collector must not be split across replicas
   selector: { matchLabels: { app: cloud-collector } }
   template:
-    metadata: { labels: { app: cloud-collector } }
+    metadata: { labels: { app: cloud-collector, sovloc-side: cloud } }
     spec:
       nodeSelector: { sovloc-role: cloud }
       containers:
         - name: collector
-          image: REPLACE_ME/sovloc-mesh:latest
-          args: ["collector","--name","cloud","--http-port","8080","--control-port","9200","--stale-ms","3000"]
+          image: IMAGE_PLACEHOLDER
+          args: ["collector","--name","cloud","--http-port","8080","--port","7000","--control-port","9200","--stale-ms","3000"]
           ports: [{ containerPort: 8080 }, { containerPort: 9200 }]
 ---
-# A template for the seven services. Each sets its own name, node side, and control
-# port, and streams to both collectors (edge over TCP, cloud over HTTP). Duplicate
-# the block per service; the side (edge/cloud) is set by nodeSelector.
-# gateway (edge)
 apiVersion: apps/v1
 kind: Deployment
-metadata: { name: svc-gateway }
+metadata: { name: svc-enrich }
 spec:
   replicas: 1
-  selector: { matchLabels: { app: svc-gateway } }
+  selector: { matchLabels: { app: svc-enrich } }
   template:
-    metadata: { labels: { app: svc-gateway } }
+    metadata: { labels: { app: svc-enrich, sovloc-side: cloud } }
     spec:
-      nodeSelector: { sovloc-role: edge }
+      nodeSelector: { sovloc-role: cloud }
       containers:
         - name: service
-          image: REPLACE_ME/sovloc-mesh:latest
-          args: ["service","--name","gateway","--culprit","none","--control-port","9110",
-                 "--period-ms","200","--edge","edge-collector:7001","--http-cloud","http://cloud-collector:8080"]
-# Repeat this Deployment block for each remaining service, changing only the name,
-# the control port, and the node side:
-#   edge  (nodeSelector sovloc-role=edge):  ingest 9111, validate 9112, device-registry 9113
-#   cloud (nodeSelector sovloc-role=cloud): enrich 9114, store 9115, alerting 9116
-# The args are identical except --name and --control-port; the --edge and
-# --http-cloud targets stay the same Service DNS names for every service.
+          image: IMAGE_PLACEHOLDER
+          args: ["service","--name","enrich","--culprit","none","--control-port","9114",
+                 "--period-ms","200","--http-cloud","http://cloud-collector:8080"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: svc-store }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: svc-store } }
+  template:
+    metadata: { labels: { app: svc-store, sovloc-side: cloud } }
+    spec:
+      nodeSelector: { sovloc-role: cloud }
+      containers:
+        - name: service
+          image: IMAGE_PLACEHOLDER
+          args: ["service","--name","store","--culprit","none","--control-port","9115",
+                 "--period-ms","200","--http-cloud","http://cloud-collector:8080"]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: svc-alerting }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app: svc-alerting } }
+  template:
+    metadata: { labels: { app: svc-alerting, sovloc-side: cloud } }
+    spec:
+      nodeSelector: { sovloc-role: cloud }
+      containers:
+        - name: service
+          image: IMAGE_PLACEHOLDER
+          args: ["service","--name","alerting","--culprit","none","--control-port","9116",
+                 "--period-ms","200","--http-cloud","http://cloud-collector:8080"]

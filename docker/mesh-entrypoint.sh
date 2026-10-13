@@ -18,11 +18,32 @@
 #   SOVLOC_STALE_MS    staleness window in ms            (default 3000)
 set -e
 
+HTTP_PORT="${PORT:-${HTTP_PORT:-8080}}"
+
+# cloud-half: the cloud collector PLUS the three cloud microservices (enrich, store,
+# alerting) in one container, so the E6 "cloud half" is genuinely remote on a
+# platform that exposes a single app/port (Crane Cloud, or one docker run on an
+# OpenStack cloud VM). The cloud services report to the local cloud collector, so
+# an external edge->cloud cut leaves the cloud collector still seeing 3/7 (its three
+# local services), exactly as the simulation models. Used as `... cloud-half` or
+# with SOVLOC_ROLE=cloud-half.
+if [ "${1:-}" = "cloud-half" ] || [ "${SOVLOC_ROLE:-}" = "cloud-half" ]; then
+  C="http://127.0.0.1:$HTTP_PORT"
+  mesh service --name enrich   --culprit none --control-port 9114 --period-ms "${PERIOD_MS:-200}" --http-cloud "$C" &
+  mesh service --name store    --culprit none --control-port 9115 --period-ms "${PERIOD_MS:-200}" --http-cloud "$C" &
+  mesh service --name alerting --culprit none --control-port 9116 --period-ms "${PERIOD_MS:-200}" --http-cloud "$C" &
+  exec mesh collector \
+    --name "${SOVLOC_NAME:-cloud}" \
+    --http-port "$HTTP_PORT" \
+    --port "${SOVLOC_TCP_PORT:-7000}" \
+    --control-port 9200 \
+    --stale-ms "${SOVLOC_STALE_MS:-3000}"
+fi
+
 if [ "$#" -gt 0 ]; then
   exec mesh "$@"
 fi
 
-HTTP_PORT="${PORT:-${HTTP_PORT:-8080}}"
 exec mesh collector \
   --name "${SOVLOC_NAME:-cloud}" \
   --http-port "$HTTP_PORT" \

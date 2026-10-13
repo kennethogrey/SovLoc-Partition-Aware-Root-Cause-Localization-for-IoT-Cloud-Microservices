@@ -1,0 +1,22 @@
+# Optional in-cluster partition for the "both halves in k3s" variant: block the
+# edge-side pods from reaching the cloud collector, while the cloud-side pods keep
+# reaching it (so the cloud collector still sees 3/7 during the cut). Apply/remove
+# it with scripts/e6/cut_k3s.sh. Requires a CNI that ENFORCES NetworkPolicy; recent
+# k3s ships an embedded controller that does, but if yours does not, use the route
+# black-hole cut instead (the default in scripts/e6/run_events.sh).
+#
+# Not needed for the default E6 setup, where the edge half runs on the harness host
+# and the cut is a route black-hole to the cloud collector's NodePort.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sovloc-partition
+spec:
+  podSelector:
+    matchLabels: { app: cloud-collector }
+  policyTypes: [Ingress]
+  ingress:
+    # allow only cloud-side pods to reach the cloud collector; edge pods are cut
+    - from:
+        - podSelector:
+            matchLabels: { sovloc-side: cloud }
