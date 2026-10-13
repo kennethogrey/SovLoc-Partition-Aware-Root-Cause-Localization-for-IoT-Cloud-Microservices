@@ -1,0 +1,32 @@
+# The canonical single-edge system expressed as a scenario.
+#
+# This mirrors the hard-coded topology that both tiers use by default: one edge
+# device holding the four edge services, a three-service cloud backend, and the
+# original call graph given explicitly so the shape is exactly the one the
+# manuscript describes. It is here to show the configuration can reproduce the
+# current system; the default runs do not need it (they still use the built-in
+# topology), so the headline numbers stay untouched.
+name: baseline
+reps: 30
+seed: 42
+loss: 0.0
+fault_at_sec: 4.0
+horizon_sec: 20.0
+
+number_of_edge_devices: 1
+total_microservices: 4
+
+cloud_services: [enrich, store, alerting]
+
+edge_devices:
+  - id: edge-1
+    services: [gateway, ingest, validate, device-registry]
+    partition_time: 16
+
+edges:
+  - [gateway, ingest, 1.0]
+  - [ingest, validate, 1.0]
+  - [validate, device-registry, 0.6]
+  - [validate, enrich, 1.0]
+  - [enrich, store, 1.0]
+  - [enrich, alerting, 0.4]

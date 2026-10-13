@@ -204,13 +204,74 @@ docker run --rm -v "$PWD/results:/app/results" sovloc-reproduce \
 docker run --rm -v "$PWD/results:/app/results" sovloc-reproduce python3 analysis/analyze.py
 ```
 
+## Configurable experiments
+
+The default experiment is a single edge side against the cloud. To study larger
+and uneven deployments, the simulation and the mesh both read an optional YAML
+scenario file that sets the number of edge devices, the microservices on each
+device, and a separate partition time per device. Nothing about the SovLoc
+algorithm changes, only the topology it runs over does. When no scenario is
+given, both tiers behave exactly as before, so the headline numbers in
+`results/` still reproduce byte for byte.
+
+A scenario looks like this (`scenarios/five-edge-20.yaml`):
+
+```yaml
+name: five-edge-20
+cloud_services: [enrich, store, alerting]
+edge_devices:
+  - id: edge-1
+    services: [sensor-gateway, ingest]
+    partition_time: 10            # seconds this device is cut from the cloud
+  - id: edge-2
+    services: [validate, device-registry, dedup, calibrate, buffer]
+    partition_time: 20
+  # edge-3, edge-4, edge-5, each with its own services and partition time
+```
+
+A device can also list `service_count: N` instead of names, and the cloud can
+use `cloud_service_count: N`. Optional `number_of_edge_devices` and
+`total_microservices` fields are cross checked against what the file actually
+lists, and the loader rejects duplicate names, negative partition times, empty
+devices, and other inconsistencies with a clear message rather than guessing.
+
+Run a scenario in the simulation:
+
+```bash
+cargo run -p sim --release -- --scenario scenarios/five-edge-20.yaml --out-dir results_five
+```
+
+It prints a per-device table and writes `raw.csv` (which `analysis/analyze.py`
+reads unchanged) and `device_summary.csv`. The result for every edge device is
+the same story as the single-edge case: during its own partition the central
+collector cannot localize a fault on that device, so its localization time tracks
+that device's partition length, while the edge-local method localizes in about
+one step on every device regardless of how long the cut lasts.
+
+For the real mesh, generate a Docker deployment for the scenario and bring it up:
+
+```bash
+cargo build --release -p mesh
+cargo run -p mesh --release -- gen-compose --scenario scenarios/five-edge-20.yaml \
+  --out docker-compose.generated.yml
+SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) docker compose -f docker-compose.generated.yml up --build
+```
+
+That runs one container per microservice, one collector per edge device, and one
+cloud collector, with each device cut from the cloud for its own partition time.
+The scenarios are also baked into the runtime image, so the Crane Cloud tier can
+run a configured topology by pointing its collector at
+`--scenario /app/scenarios/five-edge-20.yaml`.
+
 ## What is inside
 
 | Path | What it is |
 | --- | --- |
 | `crates/rca-core` | the non-AI RCA library: robust change point, robust scorer, personalized PageRank, unit tested |
+| `crates/scenario` | reads a YAML experiment file into a call graph with per-device placement and partition times, shared by the simulation and the mesh, unit tested |
 | `crates/sim` | the deterministic, seeded simulation that produces the headline results |
 | `crates/mesh` | the real networked mesh (tokio and TCP) with two live collectors, the production tier |
+| `scenarios/` | example experiment files: the baseline single-edge system, five edge devices with twenty microservices, and ten edge devices with thirty |
 | `analysis/analyze.py` | confidence intervals, effect sizes, and the two plots from `results/raw.csv`, standard library plus matplotlib |
 | `Dockerfile`, `docker/reproduce.sh` | the reproduction image and the in container reproduction steps |
 | `docker-compose.yml`, `scripts/` | the real multi container deployment, the real partition, and the tc and netem degradation |

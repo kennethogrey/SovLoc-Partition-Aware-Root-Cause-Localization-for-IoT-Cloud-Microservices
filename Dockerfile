@@ -37,6 +37,12 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends iproute2 ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/release/mesh /usr/local/bin/mesh
+# Ship the example scenarios in the image too, so a managed deployment (for
+# example Crane Cloud, which has no local volume to mount) can run a configured
+# topology with `--scenario /app/scenarios/<file>.yaml`. The default collector and
+# service ignore these unless a scenario is passed, so this changes nothing for
+# the existing single-topology deployment.
+COPY --from=build /app/scenarios /app/scenarios
 COPY docker/mesh-entrypoint.sh /usr/local/bin/mesh-entrypoint.sh
 RUN chmod +x /usr/local/bin/mesh-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/mesh-entrypoint.sh"]

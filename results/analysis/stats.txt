@@ -1,0 +1,15 @@
+SovLoc statistics report
+========================
+
+C1 central-sf edge-fault TtD vs partition length: slope 0.6625 steps/step (95% CI 0.5658..0.7517), two-sided p=0.0000
+C2 edge-local edge-fault TtD vs partition length: slope -0.0000 steps/step (95% CI -0.0000..0.0000), p=0.5450 (expected to include 0)
+C3 TOST edge-local vs central-sf top-1 at partition 0 (margin 0.05): diff=0.000, p_lower=0.0000, p_upper=0.0000, equivalent=true
+C4 log-rank edge-local vs central-sf edge-fault TtD at longest partition (6400 steps): chi2=89.53, p=0.0000
+C5 PPR minus argmax top-1 (pooled, paired): 0.094 (95% CI 0.081..0.108), p=0.0000
+
+Holm correction over the difference-test family (C1, C4, C5):
+  C1: raw p=0.0000, Holm-adjusted p=0.0000, reject at 0.05: true
+  C4: raw p=0.0000, Holm-adjusted p=0.0000, reject at 0.05: true
+  C5: raw p=0.0000, Holm-adjusted p=0.0000, reject at 0.05: true
+
+H3 bytes crossing per run (base size, 10 Hz): central-sf 532480, edge-local 245824, hybrid 128; central-sf/edge-local = 2.2x, central-sf/hybrid = 4160x

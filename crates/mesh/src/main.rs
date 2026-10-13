@@ -44,6 +44,18 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 use model::{ancestor_distances, build_graph, service_value};
+use scenario::Scenario;
+
+/// Build the call graph a mesh process should use: the configured scenario's
+/// graph when `--scenario <file>` is given, otherwise the built-in topology. The
+/// default keeps every existing command and the committed compose working
+/// unchanged.
+fn graph_for(path: &Option<String>) -> Result<CallGraph> {
+    match path {
+        Some(p) => Ok(Scenario::load(p)?.build()?.graph),
+        None => Ok(build_graph()),
+    }
+}
 
 /// Consecutive correct top-1 results a collector needs before it declares the
 /// culprit localized. This mirrors the confirmation window in the simulator so
@@ -107,6 +119,10 @@ enum Cmd {
     Service(ServiceArgs),
     /// Inject (or clear) a fault in the running mesh and tell the collectors.
     Inject(InjectArgs),
+    /// Generate a docker-compose file for a scenario (many edge devices, each
+    /// with its own collector and partition time), ready for `docker compose up`
+    /// or a Crane Cloud deployment.
+    GenCompose(GenComposeArgs),
 }
 
 #[derive(Args)]
@@ -143,6 +159,10 @@ struct CollectorArgs {
     /// Samples used to freeze the pre-fault baseline.
     #[arg(long, default_value_t = 40)]
     baseline_n: usize,
+    /// Optional scenario file (YAML). When given, the collector builds its call
+    /// graph from the scenario instead of the built-in seven-service topology.
+    #[arg(long)]
+    scenario: Option<String>,
 }
 
 #[derive(Args)]
@@ -192,6 +212,10 @@ struct ServiceArgs {
     /// Duration of the demo cloud-link drop, in seconds (0 = disabled).
     #[arg(long, default_value_t = 0.0)]
     drop_cloud_dur_sec: f64,
+    /// Optional scenario file (YAML). When given, the service builds its call
+    /// graph from the scenario so names beyond the built-in seven resolve.
+    #[arg(long)]
+    scenario: Option<String>,
 }
 
 #[derive(Args)]
@@ -199,15 +223,16 @@ struct InjectArgs {
     /// Service to fault, or "none" to clear the fault everywhere.
     #[arg(long)]
     culprit: String,
-    /// Service control targets, comma separated host:port list.
-    #[arg(
-        long,
-        default_value = "gateway:9100,ingest:9100,validate:9100,device-registry:9100,enrich:9100,store:9100,alerting:9100"
-    )]
-    services: String,
-    /// Collector control targets, comma separated host:port list.
-    #[arg(long, default_value = "cloud:9101,edge:9101")]
-    collectors: String,
+    /// Service control targets, comma separated host:port list. When omitted it
+    /// defaults to the scenario's services (if `--scenario` is given) or the
+    /// built-in seven-service list.
+    #[arg(long)]
+    services: Option<String>,
+    /// Collector control targets, comma separated host:port list. When omitted it
+    /// defaults to one per edge device plus `cloud` (if `--scenario` is given) or
+    /// the built-in `cloud,edge` pair.
+    #[arg(long)]
+    collectors: Option<String>,
     /// Optional wide-area collector control endpoints as plain HTTP base URLs,
     /// comma separated (Crane Cloud tier), e.g. `http://sovloc-xyz.cranecloud.io`.
     /// Each gets a `POST <url>/control`, so a fault can be injected into a remote
@@ -217,6 +242,36 @@ struct InjectArgs {
     /// Lead time in ms so every target starts the fault at the same instant.
     #[arg(long, default_value_t = 500)]
     lead_ms: u64,
+    /// Optional scenario file (YAML). Used to validate the culprit name and to
+    /// derive the service and collector target lists when they are not given.
+    #[arg(long)]
+    scenario: Option<String>,
+}
+
+#[derive(Args)]
+struct GenComposeArgs {
+    /// Scenario file (YAML) describing the edge devices and their services.
+    #[arg(long)]
+    scenario: String,
+    /// Where to write the generated compose file.
+    #[arg(long, default_value = "docker-compose.generated.yml")]
+    out: String,
+    /// Path the scenario file is mounted at inside each container.
+    #[arg(long, default_value = "/app/scenario.yaml")]
+    mount_path: String,
+    /// Cloud collector telemetry port.
+    #[arg(long, default_value_t = 7000)]
+    cloud_port: u16,
+    /// First edge collector telemetry port; device k listens on base + k.
+    #[arg(long, default_value_t = 7001)]
+    edge_base_port: u16,
+    /// Fault-injection time (and partition start), seconds after the shared clock.
+    #[arg(long, default_value_t = 15.0)]
+    fault_at_sec: f64,
+    /// Default culprit baked into the compose (overridable at run time with the
+    /// SOVLOC_CULPRIT environment variable). Defaults to the first edge service.
+    #[arg(long)]
+    culprit: Option<String>,
 }
 
 // ------------------------------------------------------------------- fault ---
@@ -266,7 +321,7 @@ struct Ctx {
 }
 
 async fn run_collector(a: CollectorArgs) -> Result<()> {
-    let graph = build_graph();
+    let graph = graph_for(&a.scenario)?;
 
     // Decide the starting expectation. A named culprit with a real shared clock
     // schedules the fault; "none", empty, or a missing epoch starts healthy and
@@ -648,7 +703,7 @@ async fn send_line(addr: &str, conn: &mut Option<TcpStream>, line: &str) {
 }
 
 async fn run_service(a: ServiceArgs) -> Result<()> {
-    let graph = Arc::new(build_graph());
+    let graph = Arc::new(graph_for(&a.scenario)?);
     let idx = graph
         .index_of(&a.name)
         .ok_or_else(|| anyhow::anyhow!("unknown service name: {}", a.name))?;
@@ -846,32 +901,67 @@ async fn send_control(addr: &str, msg: &str) {
 }
 
 async fn run_inject(a: InjectArgs) -> Result<()> {
+    // Build the topology once, both to validate the culprit name and to derive
+    // the target lists when they are not supplied.
+    let topo = match &a.scenario {
+        Some(p) => Some(Scenario::load(p)?.build()?),
+        None => None,
+    };
+    let graph: CallGraph = match &topo {
+        Some(t) => t.graph.clone(),
+        None => build_graph(),
+    };
+
     let culprit = if is_none_name(&a.culprit) {
         None
     } else {
-        // Validate the name against the known topology before sending it out.
-        let g = build_graph();
-        if g.index_of(&a.culprit).is_none() {
+        if graph.index_of(&a.culprit).is_none() {
             anyhow::bail!("unknown service: {}", a.culprit);
         }
         Some(a.culprit.clone())
     };
     let at_ms = now_ms() + a.lead_ms as u128;
 
-    for target in a
-        .services
-        .split(',')
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-    {
+    // Service control targets: explicit override, else the scenario's services,
+    // else the built-in seven-service list.
+    let services = match (&a.services, &topo) {
+        (Some(s), _) => s.clone(),
+        (None, Some(t)) => t
+            .graph
+            .names
+            .iter()
+            .map(|n| format!("{n}:{SERVICE_CONTROL_PORT}"))
+            .collect::<Vec<_>>()
+            .join(","),
+        (None, None) => format!(
+            "gateway:{p},ingest:{p},validate:{p},device-registry:{p},enrich:{p},store:{p},alerting:{p}",
+            p = SERVICE_CONTROL_PORT
+        ),
+    };
+    // Collector control targets: explicit override, else one per edge device
+    // plus `cloud`, else the built-in cloud/edge pair.
+    let collectors = match (&a.collectors, &topo) {
+        (Some(c), _) => c.clone(),
+        (None, Some(t)) => {
+            let mut v: Vec<String> = t
+                .device_ids
+                .iter()
+                .map(|id| format!("{id}:{COLLECTOR_CONTROL_PORT}"))
+                .collect();
+            v.push(format!("cloud:{COLLECTOR_CONTROL_PORT}"));
+            v.join(",")
+        }
+        (None, None) => format!("cloud:{COLLECTOR_CONTROL_PORT},edge:{COLLECTOR_CONTROL_PORT}"),
+    };
+
+    for target in services.split(',').map(str::trim).filter(|t| !t.is_empty()) {
         let msg = serde_json::to_string(&ServiceControl {
             culprit: culprit.clone(),
             at_ms,
         })?;
         send_control(target, &msg).await;
     }
-    for target in a
-        .collectors
+    for target in collectors
         .split(',')
         .map(str::trim)
         .filter(|t| !t.is_empty())
@@ -917,5 +1007,136 @@ async fn main() -> Result<()> {
         Cmd::Collector(a) => run_collector(a).await,
         Cmd::Service(a) => run_service(a).await,
         Cmd::Inject(a) => run_inject(a).await,
+        Cmd::GenCompose(a) => run_gen_compose(a),
     }
+}
+
+// --------------------------------------------------------------- gen-compose --
+/// Emit a docker-compose file for a scenario: one container per microservice,
+/// one edge collector per device plus a cloud collector, each service wired to
+/// its device's edge collector and the cloud, and each edge device cut from the
+/// cloud for its own partition time using the existing `--drop-cloud-*` flags.
+fn run_gen_compose(a: GenComposeArgs) -> Result<()> {
+    let scenario = Scenario::load(&a.scenario)?;
+    let topo = scenario.build()?;
+
+    // Microservice and device names become docker compose service keys.
+    let valid = |s: &str| {
+        !s.is_empty()
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    };
+    for id in &topo.device_ids {
+        if !valid(id) {
+            anyhow::bail!(
+                "edge-device id '{id}' is not a valid docker compose name (letters, digits, '-', '_', '.')"
+            );
+        }
+    }
+    for name in &topo.graph.names {
+        if !valid(name) {
+            anyhow::bail!(
+                "microservice name '{name}' is not a valid docker compose name (letters, digits, '-', '_', '.')"
+            );
+        }
+    }
+
+    let culprit = a
+        .culprit
+        .clone()
+        .unwrap_or_else(|| topo.graph.names[0].clone());
+    let mount = &a.mount_path;
+    let vol = format!("./{}:{}:ro", a.scenario, mount);
+    let fault = a.fault_at_sec;
+
+    let mut s = String::new();
+    s.push_str(&format!(
+        "# Generated by `mesh gen-compose` from {}. Regenerate rather than editing by hand.\n",
+        a.scenario
+    ));
+    s.push_str("# Bring up from the repo root with a shared clock:\n");
+    s.push_str(
+        "#   SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) docker compose -f <this file> up --build\n",
+    );
+    s.push_str(
+        "# Each edge device is cut from the cloud for its own partition time, so the cloud\n",
+    );
+    s.push_str(
+        "# collector goes blind to that device for that window while the device's own edge\n",
+    );
+    s.push_str("# collector keeps localizing.\n");
+    s.push_str(&format!("name: sovloc-{}\n\n", scenario.name));
+    s.push_str("services:\n");
+
+    // Cloud collector: sees every service until each device's partition cuts it.
+    s.push_str("  cloud:\n    build: .\n    cap_add: [\"NET_ADMIN\"]\n");
+    s.push_str(&format!("    volumes: [\"{vol}\"]\n"));
+    s.push_str(&format!(
+        "    command: [\"collector\",\"--name\",\"cloud\",\"--port\",\"{}\",\"--scenario\",\"{}\",\"--expect-culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\"]\n",
+        a.cloud_port, mount, culprit, fault
+    ));
+
+    // One edge collector per device, each on its own telemetry port.
+    for (d, id) in topo.device_ids.iter().enumerate() {
+        let port = a.edge_base_port as usize + d;
+        s.push_str(&format!(
+            "  {id}:\n    build: .\n    cap_add: [\"NET_ADMIN\"]\n"
+        ));
+        s.push_str(&format!("    volumes: [\"{vol}\"]\n"));
+        s.push_str(&format!(
+            "    command: [\"collector\",\"--name\",\"{}\",\"--port\",\"{}\",\"--scenario\",\"{}\",\"--expect-culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\"]\n",
+            id, port, mount, culprit, fault
+        ));
+    }
+
+    // One container per microservice. Edge services stream to their device's
+    // collector and the cloud, and drop the cloud link for the device's
+    // partition window; cloud services stream to the cloud collector only.
+    for i in 0..topo.n() {
+        let name = &topo.graph.names[i];
+        s.push_str(&format!(
+            "  {name}:\n    build: .\n    cap_add: [\"NET_ADMIN\"]\n"
+        ));
+        s.push_str(&format!("    volumes: [\"{vol}\"]\n"));
+        match topo.service_device[i] {
+            Some(d) => {
+                let port = a.edge_base_port as usize + d;
+                let edge_name = &topo.device_ids[d];
+                let dur = topo.partition_sec[d];
+                s.push_str(&format!(
+                    "    command: [\"service\",\"--name\",\"{}\",\"--scenario\",\"{}\",\"--culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\",\"--cloud\",\"cloud:{}\",\"--edge\",\"{}:{}\",\"--drop-cloud-after-sec\",\"{}\",\"--drop-cloud-dur-sec\",\"{}\"]\n",
+                    name, mount, culprit, fault, a.cloud_port, edge_name, port, fault, dur
+                ));
+            }
+            None => {
+                s.push_str(&format!(
+                    "    command: [\"service\",\"--name\",\"{}\",\"--scenario\",\"{}\",\"--culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\",\"--cloud\",\"cloud:{}\"]\n",
+                    name, mount, culprit, fault, a.cloud_port
+                ));
+            }
+        }
+    }
+
+    s.push_str(&format!(
+        "\nnetworks:\n  default:\n    name: sovloc-{}-net\n",
+        scenario.name
+    ));
+
+    std::fs::write(&a.out, &s)?;
+    let containers = topo.n() + topo.device_ids.len() + 1;
+    println!(
+        "Wrote {} for scenario '{}': {} edge devices, {} microservices, {} containers.",
+        a.out,
+        scenario.name,
+        topo.device_ids.len(),
+        topo.n(),
+        containers
+    );
+    println!("Bring it up from the repo root with a shared clock:");
+    println!(
+        "  SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) SOVLOC_CULPRIT={} docker compose -f {} up --build",
+        culprit, a.out
+    );
+    println!("Each edge device's partition starts at t+{fault}s and lasts its own partition_time.");
+    Ok(())
 }

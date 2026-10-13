@@ -1,0 +1,12 @@
+[package]
+name = "scenario"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Data-driven experiment scenarios: configurable edge devices, microservices, per-edge-device microservice distribution, and per-edge-device partition times, built into a call graph the RCA harness consumes."
+
+[dependencies]
+rca-core   = { path = "../rca-core" }
+serde      = { workspace = true }
+serde_yaml = { workspace = true }
+anyhow     = { workspace = true }

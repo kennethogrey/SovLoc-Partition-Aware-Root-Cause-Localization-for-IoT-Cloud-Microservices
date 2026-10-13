@@ -2,6 +2,11 @@
 /target
 **/*.rs.bk
 
+# Compose files emitted by `mesh gen-compose` are derived from a scenario; keep
+# the scenarios in git and regenerate the compose rather than committing it.
+docker-compose.generated.yml
+docker-compose.*.generated.yml
+
 # The seeded experiment is deterministic (seed 42), so results/ is committed and
 # matches the tagged release. `make reproduce` regenerates the same numbers.
 # The raw csv, the summary, and analysis_summary.md are the authoritative
@@ -27,3 +32,14 @@ __pycache__/
 Thumbs.db
 .vscode/
 .idea/
+
+# LaTeX build artifacts (manuscript compiles locally for verification)
+paper/overleaf/*.aux
+paper/overleaf/*.log
+paper/overleaf/*.out
+paper/overleaf/*.fls
+paper/overleaf/*.fdb_latexmk
+paper/overleaf/*.synctex.gz
+paper/overleaf/*.bbl
+paper/overleaf/*.blg
+paper/overleaf/*.toc

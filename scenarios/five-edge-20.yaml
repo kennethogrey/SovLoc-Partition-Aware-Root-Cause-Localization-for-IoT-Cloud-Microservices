@@ -1,0 +1,37 @@
+# Five edge devices, twenty microservices, uneven distribution, and a different
+# partition time on every device. This is the configuration the brief asks for:
+#   edge-1 -> 2 microservices, partition 10 s
+#   edge-2 -> 5 microservices, partition 20 s
+#   edge-3 -> 3 microservices, partition 30 s
+#   edge-4 -> 7 microservices, partition 15 s
+#   edge-5 -> 3 microservices, partition 40 s
+# The call graph is generated automatically from this structure: each device is a
+# local chain whose last service crosses into the cloud backend.
+name: five-edge-20
+reps: 30
+seed: 42
+loss: 0.0
+fault_at_sec: 4.0
+horizon_sec: 50.0
+
+number_of_edge_devices: 5
+total_microservices: 20
+
+cloud_services: [enrich, store, alerting]
+
+edge_devices:
+  - id: edge-1
+    services: [sensor-gateway, ingest]
+    partition_time: 10
+  - id: edge-2
+    services: [validate, device-registry, dedup, calibrate, buffer]
+    partition_time: 20
+  - id: edge-3
+    services: [filter, aggregate, compress]
+    partition_time: 30
+  - id: edge-4
+    services: [router, scheduler, cache, throttle, batch, encrypt, sign]
+    partition_time: 15
+  - id: edge-5
+    services: [telemetry, heartbeat, watchdog]
+    partition_time: 40

@@ -10,17 +10,19 @@
 //!    decide *which* service is the root cause, by walking the dependency graph
 //!    biased toward the anomalies (survey class D).
 //!
-//! The same algorithm powers both the **centralised** and **decentralised**
-//! analyzers in the experiment; the *only* difference between them is which
-//! services' telemetry is **visible** (`visible[i]`). Under a network
-//! partition, a centralised cloud collector loses visibility of the edge side,
-//! while a decentralised edge agent keeps it, which is exactly why the
-//! decentralised design preserves *operational sovereignty*.
+//! The same algorithm runs in every placement in the experiment. What differs
+//! between placements is not a hand-set visibility flag but which telemetry each
+//! collector has actually **received** by a given step, which the simulator's
+//! transport model decides (queue, retry, replay on heal, loss, bandwidth). The
+//! `observed[i]` mask passed to [`localize`] therefore reflects data a collector
+//! holds, not an assumption, and a service whose samples have not arrived simply
+//! has a stale, low anomaly score.
 
 pub mod changepoint;
 pub mod graph;
 pub mod ppr;
 pub mod stats;
+pub mod survival;
 
 pub use graph::CallGraph;
 
@@ -138,12 +140,55 @@ pub fn localize(
 }
 
 /// Convenience: the 1-based rank of `culprit` in a ranking (1 = top-1). Returns
-/// `None` if the culprit is absent (e.g., invisible under partition).
+/// `None` if the culprit is absent (e.g., its telemetry has not been received).
 pub fn rank_of(ranked: &[RankedCause], culprit: usize) -> Option<usize> {
     ranked
         .iter()
         .position(|r| r.service == culprit)
         .map(|p| p + 1)
+}
+
+/// The two rankers compared in the ablation (hypothesis H4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Ranker {
+    /// Plain argmax of the robust anomaly score over the observed services. No
+    /// graph is used, so a caller whose anomaly is amplified by retries can
+    /// outscore the true culprit.
+    Argmax,
+    /// Personalized PageRank over the call graph ([`localize`]), which follows
+    /// the dependency structure toward the deepest anomalous service.
+    Ppr,
+}
+
+/// Rank candidate root causes with the chosen ranker. `observed[i]` is true when
+/// the collector currently holds telemetry for service `i`; unobserved services
+/// are never ranked. For [`Ranker::Argmax`] the ranking is just the observed
+/// services sorted by anomaly; for [`Ranker::Ppr`] it is [`localize`].
+pub fn rank_causes(
+    graph: &CallGraph,
+    anomaly: &[f64],
+    observed: &[bool],
+    cfg: &RcaConfig,
+    ranker: Ranker,
+) -> Vec<RankedCause> {
+    match ranker {
+        Ranker::Ppr => localize(graph, anomaly, observed, cfg),
+        Ranker::Argmax => {
+            let mut ranked: Vec<RankedCause> = (0..graph.n)
+                .filter(|&i| observed[i] && anomaly[i].max(0.0) > 0.0)
+                .map(|i| RankedCause {
+                    service: i,
+                    score: anomaly[i],
+                })
+                .collect();
+            ranked.sort_by(|x, y| {
+                y.score
+                    .partial_cmp(&x.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            ranked
+        }
+    }
 }
 
 #[cfg(test)]

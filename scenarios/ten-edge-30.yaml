@@ -1,0 +1,27 @@
+# Ten edge devices and thirty edge microservices, to show the harness does not
+# depend on a fixed number of either. Each device carries three microservices
+# (auto-named <id>-svc-0 .. <id>-svc-2) and its own partition time. Change the
+# counts or the partition times and rerun; no source change is needed.
+name: ten-edge-30
+reps: 30
+seed: 42
+loss: 0.0
+fault_at_sec: 4.0
+horizon_sec: 40.0
+
+number_of_edge_devices: 10
+total_microservices: 30
+
+cloud_service_count: 3
+
+edge_devices:
+  - { id: edge-1,  service_count: 3, partition_time: 10 }
+  - { id: edge-2,  service_count: 3, partition_time: 20 }
+  - { id: edge-3,  service_count: 3, partition_time: 30 }
+  - { id: edge-4,  service_count: 3, partition_time: 15 }
+  - { id: edge-5,  service_count: 3, partition_time: 25 }
+  - { id: edge-6,  service_count: 3, partition_time: 12 }
+  - { id: edge-7,  service_count: 3, partition_time: 18 }
+  - { id: edge-8,  service_count: 3, partition_time: 22 }
+  - { id: edge-9,  service_count: 3, partition_time: 28 }
+  - { id: edge-10, service_count: 3, partition_time: 16 }
