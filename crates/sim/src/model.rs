@@ -57,7 +57,6 @@ pub struct Topo {
     pub sides: Vec<Side>,
 }
 
-
 /// Topology families used in the detector/ranker ablation (E2, E7).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TopoKind {
@@ -236,7 +235,10 @@ pub fn generate_metrics(
     let n = topo.graph.n;
     let sigma = NOISE_SD + LOSS_NOISE * loss;
     let noise = Normal::new(0.0, sigma).unwrap();
-    let mag = Normal::new(FAULT_MEAN, FAULT_SD).unwrap().sample(rng).max(20.0);
+    let mag = Normal::new(FAULT_MEAN, FAULT_SD)
+        .unwrap()
+        .sample(rng)
+        .max(20.0);
     let dist = ancestor_distances(&topo.graph.incoming, culprit);
 
     let mut m = vec![vec![0.0_f64; horizon]; n];
@@ -346,9 +348,9 @@ fn held_view(
 /// The outcome of one analyzer over one held view.
 struct AnalyzerOut {
     diagnosed: bool,
-    ttd: f64,       // steps from fault onset to confirmed top-1 (if diagnosed)
-    censored_at: f64, // steps from fault onset to end of window (if not diagnosed)
-    det_latency: f64, // steps from fault onset to first CUSUM alarm (NaN if none)
+    ttd: f64,          // steps from fault onset to confirmed top-1 (if diagnosed)
+    censored_at: f64,  // steps from fault onset to end of window (if not diagnosed)
+    det_latency: f64,  // steps from fault onset to first CUSUM alarm (NaN if none)
     false_alarm: bool, // a CUSUM alarm fired before the true fault onset
     final_rank: i64,
 }
@@ -435,7 +437,9 @@ fn analyze_view(
                 anomaly[i] = robust_score(&view[i][0..BASELINE_LEN], view[i][t]);
             }
         }
-        let obs_now: Vec<bool> = (0..n).map(|i| observed[i] && !view[i][t].is_nan()).collect();
+        let obs_now: Vec<bool> = (0..n)
+            .map(|i| observed[i] && !view[i][t].is_nan())
+            .collect();
         let ranked = rank_causes(&topo.graph, &anomaly, &obs_now, &cfg, ranker);
         last_rank = rank_of(&ranked, culprit).map(|r| r as i64).unwrap_or(-1);
         if ranked.first().map(|r| r.service) == Some(culprit) {
@@ -519,7 +523,15 @@ pub fn simulate(params: &RunParams) -> RunOutcome {
     let heal = part_start + params.part_len;
     let horizon = (heal + params.part_len.max(40) + 60).max(fault_at + 120);
 
-    let metrics = generate_metrics(&topo, culprit, params.fault, fault_at, horizon, params.loss, &mut rng);
+    let metrics = generate_metrics(
+        &topo,
+        culprit,
+        params.fault,
+        fault_at,
+        horizon,
+        params.loss,
+        &mut rng,
+    );
 
     let out = match params.placement {
         Placement::CentralNaive | Placement::CentralSf => {
@@ -529,20 +541,58 @@ pub fn simulate(params: &RunParams) -> RunOutcome {
                 Policy::Naive
             };
             let (view, bytes, observed) = held_view(
-                &topo, &metrics, Side::Cloud, policy, part_start, params.part_len,
-                params.sample_every, params.latency, params.bandwidth, params.loss, &mut rng,
+                &topo,
+                &metrics,
+                Side::Cloud,
+                policy,
+                part_start,
+                params.part_len,
+                params.sample_every,
+                params.latency,
+                params.bandwidth,
+                params.loss,
+                &mut rng,
             );
-            let a = analyze_view(&topo, &view, &observed, culprit, fault_at, horizon, params.h, params.persist, params.ranker);
+            let a = analyze_view(
+                &topo,
+                &view,
+                &observed,
+                culprit,
+                fault_at,
+                horizon,
+                params.h,
+                params.persist,
+                params.ranker,
+            );
             (a, bytes)
         }
         Placement::EdgeLocal => {
             // Collector on the edge: edge local, cloud pulled across naively; a
             // compact verdict is sent to the cloud.
             let (view, mut bytes, observed) = held_view(
-                &topo, &metrics, Side::Edge, Policy::Naive, part_start, params.part_len,
-                params.sample_every, params.latency, params.bandwidth, params.loss, &mut rng,
+                &topo,
+                &metrics,
+                Side::Edge,
+                Policy::Naive,
+                part_start,
+                params.part_len,
+                params.sample_every,
+                params.latency,
+                params.bandwidth,
+                params.loss,
+                &mut rng,
             );
-            let a = analyze_view(&topo, &view, &observed, culprit, fault_at, horizon, params.h, params.persist, params.ranker);
+            let a = analyze_view(
+                &topo,
+                &view,
+                &observed,
+                culprit,
+                fault_at,
+                horizon,
+                params.h,
+                params.persist,
+                params.ranker,
+            );
             if a.diagnosed {
                 bytes += VERDICT_BYTES; // one verdict crosses on diagnosis
             }
@@ -555,8 +605,28 @@ pub fn simulate(params: &RunParams) -> RunOutcome {
             let cloud_only = side_mask(&topo, Side::Cloud);
             let edge_view = local_view(&metrics, &edge_only);
             let cloud_view = local_view(&metrics, &cloud_only);
-            let ea = analyze_view(&topo, &edge_view, &edge_only, culprit, fault_at, horizon, params.h, params.persist, params.ranker);
-            let ca = analyze_view(&topo, &cloud_view, &cloud_only, culprit, fault_at, horizon, params.h, params.persist, params.ranker);
+            let ea = analyze_view(
+                &topo,
+                &edge_view,
+                &edge_only,
+                culprit,
+                fault_at,
+                horizon,
+                params.h,
+                params.persist,
+                params.ranker,
+            );
+            let ca = analyze_view(
+                &topo,
+                &cloud_view,
+                &cloud_only,
+                culprit,
+                fault_at,
+                horizon,
+                params.h,
+                params.persist,
+                params.ranker,
+            );
             // The culprit sits on one side; that side's analyzer is the one that
             // can localize it. Take the earliest diagnosis across the two.
             let a = combine(ea, ca, horizon, fault_at);
@@ -586,7 +656,15 @@ pub fn count_false_alarms(h: f64, persist: usize, horizon: usize, seed: u64) -> 
     let topo = build_topology(TopoKind::Chain, 0);
     let mut rng = StdRng::seed_from_u64(seed);
     // No fault: generate_metrics with FaultKind::None gives a pure baseline.
-    let metrics = generate_metrics(&topo, 0, FaultKind::None, horizon / 2, horizon, 0.0, &mut rng);
+    let metrics = generate_metrics(
+        &topo,
+        0,
+        FaultKind::None,
+        horizon / 2,
+        horizon,
+        0.0,
+        &mut rng,
+    );
     let mut events = 0usize;
     for series in &metrics {
         let mut consec = 0usize;
@@ -677,7 +755,11 @@ mod tests {
         // validate (index 2) is an edge-side service.
         for p in Placement::all() {
             let o = simulate(&base_params(p, 0, 2));
-            assert!(o.diagnosed, "{} should diagnose with no partition", p.as_str());
+            assert!(
+                o.diagnosed,
+                "{} should diagnose with no partition",
+                p.as_str()
+            );
         }
     }
 
@@ -705,7 +787,10 @@ mod tests {
         // that loses the fault during the cut, which the old mask could never show.
         let edge = simulate(&base_params(Placement::EdgeLocal, 300, 4));
         let central = simulate(&base_params(Placement::CentralNaive, 300, 4));
-        assert!(central.diagnosed, "cloud collector sees the cloud-side fault");
+        assert!(
+            central.diagnosed,
+            "cloud collector sees the cloud-side fault"
+        );
         // edge-local is blind to the cloud side during the cut; it is slower or censored.
         if edge.diagnosed && central.diagnosed {
             assert!(edge.ttd >= central.ttd);

@@ -42,8 +42,8 @@ jobs:
       - name: Smoke benchmark (quick reproduction)
         run: cargo run -p sim --release -- --quick --out-dir results
 
-      - name: Analysis (confidence intervals, table)
-        run: python3 analysis/analyze.py
+      - name: Analysis (summary tables, survival stats, numbers.tex, figure)
+        run: cargo run -p sim --release --bin analysis -- results
 
   docker-reproduce:
     runs-on: ubuntu-latest

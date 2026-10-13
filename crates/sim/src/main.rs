@@ -127,7 +127,11 @@ fn push_run(rows: &mut Vec<Row>, experiment: &'static str, p: RunParams) {
         h: p.h,
         seed: p.seed,
         culprit: name,
-        culprit_side: if o.culprit_side == Side::Edge { "edge" } else { "cloud" },
+        culprit_side: if o.culprit_side == Side::Edge {
+            "edge"
+        } else {
+            "cloud"
+        },
         diagnosed: o.diagnosed,
         ttd_steps: o.diagnosed.then_some(o.ttd),
         ttd_ms: o.diagnosed.then_some(o.ttd * STEP_MS),
@@ -200,7 +204,12 @@ fn experiment_e2(base: u64, reps: usize) -> Vec<Row> {
         TopoKind::Cycle,
         TopoKind::Retry,
     ];
-    let faults = [FaultKind::Latency, FaultKind::Retry, FaultKind::Cpu, FaultKind::Crash];
+    let faults = [
+        FaultKind::Latency,
+        FaultKind::Retry,
+        FaultKind::Cpu,
+        FaultKind::Crash,
+    ];
     let mut cell = 0u64;
     for &kind in &topos {
         let services = build_topology(kind, 5).graph.n;
@@ -343,13 +352,21 @@ fn main() -> Result<()> {
         let rows = experiment_e1(cli.seed, r1);
         let path = format!("{}/raw_e1.csv", cli.out_dir);
         write_rows(&path, &rows)?;
-        println!("E1 fair placement comparison: {} runs -> {}", rows.len(), path);
+        println!(
+            "E1 fair placement comparison: {} runs -> {}",
+            rows.len(),
+            path
+        );
     }
     if run("e2") {
         let rows = experiment_e2(cli.seed, r2);
         let path = format!("{}/raw_e2.csv", cli.out_dir);
         write_rows(&path, &rows)?;
-        println!("E2 detector and ranker ablation: {} runs -> {}", rows.len(), path);
+        println!(
+            "E2 detector and ranker ablation: {} runs -> {}",
+            rows.len(),
+            path
+        );
     }
     if run("e4") {
         let rows = experiment_e4(cli.seed, r4);

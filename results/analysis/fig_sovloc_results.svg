@@ -1,0 +1,140 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="824" height="454" viewBox="0 0 824 454" font-family="Helvetica,Arial,sans-serif">
+<rect width="824" height="454" fill="white"/>
+<text x="208" y="20" text-anchor="middle" font-size="15">Edge-side fault</text>
+<line x1="58.0" y1="334.0" x2="358.0" y2="334.0" stroke="#e6e6e6"/>
+<text x="52.0" y="337.0" text-anchor="end" font-size="11">1</text>
+<line x1="58.0" y1="259.0" x2="358.0" y2="259.0" stroke="#e6e6e6"/>
+<text x="52.0" y="262.0" text-anchor="end" font-size="11">10</text>
+<line x1="58.0" y1="184.0" x2="358.0" y2="184.0" stroke="#e6e6e6"/>
+<text x="52.0" y="187.0" text-anchor="end" font-size="11">100</text>
+<line x1="58.0" y1="109.0" x2="358.0" y2="109.0" stroke="#e6e6e6"/>
+<text x="52.0" y="112.0" text-anchor="end" font-size="11">1000</text>
+<line x1="58.0" y1="34.0" x2="358.0" y2="34.0" stroke="#e6e6e6"/>
+<text x="52.0" y="37.0" text-anchor="end" font-size="11">10000</text>
+<line x1="58.0" y1="334.0" x2="58.0" y2="338.0" stroke="#cccccc"/>
+<text x="58.0" y="352.0" text-anchor="middle" font-size="11">0</text>
+<line x1="133.0" y1="334.0" x2="133.0" y2="338.0" stroke="#cccccc"/>
+<text x="133.0" y="352.0" text-anchor="middle" font-size="11">160</text>
+<line x1="208.0" y1="334.0" x2="208.0" y2="338.0" stroke="#cccccc"/>
+<text x="208.0" y="352.0" text-anchor="middle" font-size="11">320</text>
+<line x1="283.0" y1="334.0" x2="283.0" y2="338.0" stroke="#cccccc"/>
+<text x="283.0" y="352.0" text-anchor="middle" font-size="11">480</text>
+<line x1="358.0" y1="334.0" x2="358.0" y2="338.0" stroke="#cccccc"/>
+<text x="358.0" y="352.0" text-anchor="middle" font-size="11">640</text>
+<rect x="58.0" y="34.0" width="300.0" height="300.0" fill="none" stroke="#333"/>
+<text x="208.0" y="370.0" text-anchor="middle" font-size="12">Partition length (s)</text>
+<text x="14.0" y="184.0" text-anchor="middle" font-size="12" transform="rotate(-90 14.0 184.0)">Median time to diagnosis (steps)</text>
+<path d="M58.0,334.0 L60.3,213.8 L62.7,187.4 L67.4,163.1 L76.8,139.7 L95.5,116.7 L133.0,93.9 L208.0,71.2 L358.0,48.6" fill="none" stroke="#8c8c8c" stroke-width="1.8"/>
+<circle cx="58.0" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="60.3" cy="213.8" r="3" fill="#8c8c8c"/>
+<circle cx="62.7" cy="187.4" r="3" fill="#8c8c8c"/>
+<circle cx="67.4" cy="163.1" r="3" fill="#8c8c8c"/>
+<circle cx="76.8" cy="139.7" r="3" fill="#8c8c8c"/>
+<circle cx="95.5" cy="116.7" r="3" fill="#8c8c8c"/>
+<circle cx="133.0" cy="93.9" r="3" fill="#8c8c8c"/>
+<circle cx="208.0" cy="71.2" r="3" fill="#8c8c8c"/>
+<circle cx="358.0" cy="48.6" r="3" fill="#8c8c8c"/>
+<path d="M58.0,334.0 L60.3,213.8 L62.7,187.4 L67.4,163.1 L76.8,139.7 L95.5,116.7 L133.0,93.9 L208.0,71.2 L358.0,48.6" fill="none" stroke="#d62728" stroke-width="1.8"/>
+<circle cx="58.0" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="60.3" cy="213.8" r="3" fill="#d62728"/>
+<circle cx="62.7" cy="187.4" r="3" fill="#d62728"/>
+<circle cx="67.4" cy="163.1" r="3" fill="#d62728"/>
+<circle cx="76.8" cy="139.7" r="3" fill="#d62728"/>
+<circle cx="95.5" cy="116.7" r="3" fill="#d62728"/>
+<circle cx="133.0" cy="93.9" r="3" fill="#d62728"/>
+<circle cx="208.0" cy="71.2" r="3" fill="#d62728"/>
+<circle cx="358.0" cy="48.6" r="3" fill="#d62728"/>
+<path d="M58.0,334.0 L60.3,334.0 L62.7,334.0 L67.4,334.0 L76.8,334.0 L95.5,334.0 L133.0,334.0 L208.0,334.0 L358.0,334.0" fill="none" stroke="#1f77b4" stroke-width="1.8"/>
+<circle cx="58.0" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="60.3" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="62.7" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="67.4" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="76.8" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="95.5" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="133.0" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="208.0" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="358.0" cy="334.0" r="3" fill="#1f77b4"/>
+<path d="M58.0,334.0 L60.3,334.0 L62.7,334.0 L67.4,334.0 L76.8,334.0 L95.5,334.0 L133.0,334.0 L208.0,334.0 L358.0,334.0" fill="none" stroke="#2ca02c" stroke-width="1.8"/>
+<circle cx="58.0" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="60.3" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="62.7" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="67.4" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="76.8" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="95.5" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="133.0" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="208.0" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="358.0" cy="334.0" r="3" fill="#2ca02c"/>
+<text x="650" y="20" text-anchor="middle" font-size="15">Cloud-side fault</text>
+<line x1="500.0" y1="334.0" x2="800.0" y2="334.0" stroke="#e6e6e6"/>
+<text x="494.0" y="337.0" text-anchor="end" font-size="11">1</text>
+<line x1="500.0" y1="259.0" x2="800.0" y2="259.0" stroke="#e6e6e6"/>
+<text x="494.0" y="262.0" text-anchor="end" font-size="11">10</text>
+<line x1="500.0" y1="184.0" x2="800.0" y2="184.0" stroke="#e6e6e6"/>
+<text x="494.0" y="187.0" text-anchor="end" font-size="11">100</text>
+<line x1="500.0" y1="109.0" x2="800.0" y2="109.0" stroke="#e6e6e6"/>
+<text x="494.0" y="112.0" text-anchor="end" font-size="11">1000</text>
+<line x1="500.0" y1="34.0" x2="800.0" y2="34.0" stroke="#e6e6e6"/>
+<text x="494.0" y="37.0" text-anchor="end" font-size="11">10000</text>
+<line x1="500.0" y1="334.0" x2="500.0" y2="338.0" stroke="#cccccc"/>
+<text x="500.0" y="352.0" text-anchor="middle" font-size="11">0</text>
+<line x1="575.0" y1="334.0" x2="575.0" y2="338.0" stroke="#cccccc"/>
+<text x="575.0" y="352.0" text-anchor="middle" font-size="11">160</text>
+<line x1="650.0" y1="334.0" x2="650.0" y2="338.0" stroke="#cccccc"/>
+<text x="650.0" y="352.0" text-anchor="middle" font-size="11">320</text>
+<line x1="725.0" y1="334.0" x2="725.0" y2="338.0" stroke="#cccccc"/>
+<text x="725.0" y="352.0" text-anchor="middle" font-size="11">480</text>
+<line x1="800.0" y1="334.0" x2="800.0" y2="338.0" stroke="#cccccc"/>
+<text x="800.0" y="352.0" text-anchor="middle" font-size="11">640</text>
+<rect x="500.0" y="34.0" width="300.0" height="300.0" fill="none" stroke="#333"/>
+<text x="650.0" y="370.0" text-anchor="middle" font-size="12">Partition length (s)</text>
+<text x="456.0" y="184.0" text-anchor="middle" font-size="12" transform="rotate(-90 456.0 184.0)">Median time to diagnosis (steps)</text>
+<path d="M500.0,334.0 L502.3,334.0 L504.7,334.0 L509.4,334.0 L518.8,334.0 L537.5,334.0 L575.0,334.0 L650.0,334.0 L800.0,334.0" fill="none" stroke="#8c8c8c" stroke-width="1.8"/>
+<circle cx="500.0" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="502.3" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="504.7" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="509.4" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="518.8" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="537.5" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="575.0" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="650.0" cy="334.0" r="3" fill="#8c8c8c"/>
+<circle cx="800.0" cy="334.0" r="3" fill="#8c8c8c"/>
+<path d="M500.0,334.0 L502.3,334.0 L504.7,334.0 L509.4,334.0 L518.8,334.0 L537.5,334.0 L575.0,334.0 L650.0,334.0 L800.0,334.0" fill="none" stroke="#d62728" stroke-width="1.8"/>
+<circle cx="500.0" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="502.3" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="504.7" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="509.4" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="518.8" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="537.5" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="575.0" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="650.0" cy="334.0" r="3" fill="#d62728"/>
+<circle cx="800.0" cy="334.0" r="3" fill="#d62728"/>
+<path d="M500.0,334.0 L502.3,213.8 L504.7,187.4 L509.4,163.1 L518.8,139.7 L537.5,116.7 L575.0,93.9 L650.0,71.2 L800.0,48.6" fill="none" stroke="#1f77b4" stroke-width="1.8"/>
+<circle cx="500.0" cy="334.0" r="3" fill="#1f77b4"/>
+<circle cx="502.3" cy="213.8" r="3" fill="#1f77b4"/>
+<circle cx="504.7" cy="187.4" r="3" fill="#1f77b4"/>
+<circle cx="509.4" cy="163.1" r="3" fill="#1f77b4"/>
+<circle cx="518.8" cy="139.7" r="3" fill="#1f77b4"/>
+<circle cx="537.5" cy="116.7" r="3" fill="#1f77b4"/>
+<circle cx="575.0" cy="93.9" r="3" fill="#1f77b4"/>
+<circle cx="650.0" cy="71.2" r="3" fill="#1f77b4"/>
+<circle cx="800.0" cy="48.6" r="3" fill="#1f77b4"/>
+<path d="M500.0,334.0 L502.3,334.0 L504.7,334.0 L509.4,334.0 L518.8,334.0 L537.5,334.0 L575.0,334.0 L650.0,334.0 L800.0,334.0" fill="none" stroke="#2ca02c" stroke-width="1.8"/>
+<circle cx="500.0" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="502.3" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="504.7" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="509.4" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="518.8" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="537.5" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="575.0" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="650.0" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="800.0" cy="334.0" r="3" fill="#2ca02c"/>
+<circle cx="58.0" cy="394.0" r="4" fill="#8c8c8c"/>
+<text x="68.0" y="398.0" font-size="12">central naive</text>
+<circle cx="248.0" cy="394.0" r="4" fill="#d62728"/>
+<text x="258.0" y="398.0" font-size="12">central store-and-forward</text>
+<circle cx="438.0" cy="394.0" r="4" fill="#1f77b4"/>
+<text x="448.0" y="398.0" font-size="12">edge local</text>
+<circle cx="628.0" cy="394.0" r="4" fill="#2ca02c"/>
+<text x="638.0" y="398.0" font-size="12">hybrid</text>
+<text x="58.0" y="420.0" font-size="11" fill="#555">Hollow marker: median not reached within the run (censored).</text>
+</svg>

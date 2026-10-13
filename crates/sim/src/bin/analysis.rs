@@ -70,9 +70,15 @@ fn read(path: &str) -> Result<Vec<Raw>> {
 
 fn censored_of(r: &Raw) -> Censored {
     if r.diagnosed {
-        Censored { time: r.ttd_steps.unwrap_or(0.0), event: true }
+        Censored {
+            time: r.ttd_steps.unwrap_or(0.0),
+            event: true,
+        }
     } else {
-        Censored { time: r.censored_at.unwrap_or(0.0), event: false }
+        Censored {
+            time: r.censored_at.unwrap_or(0.0),
+            event: false,
+        }
     }
 }
 
@@ -158,10 +164,32 @@ fn main() -> Result<()> {
 
     let mut e1w = csv::Writer::from_path(format!("{out}/summary_e1.csv"))?;
     e1w.write_record([
-        "placement", "part_len", "part_sec", "n", "success_pct", "success_lo", "success_hi",
-        "edge_success_pct", "edge_lo", "edge_hi", "cloud_success_pct", "cloud_lo", "cloud_hi",
-        "edge_median_ttd", "cloud_median_ttd", "p95_ttd_steps", "mean_cross_kb",
+        "placement",
+        "part_len",
+        "part_sec",
+        "n",
+        "success_pct",
+        "success_lo",
+        "success_hi",
+        "edge_success_pct",
+        "edge_lo",
+        "edge_hi",
+        "cloud_success_pct",
+        "cloud_lo",
+        "cloud_hi",
+        "edge_median_ttd",
+        "cloud_median_ttd",
+        "median_ttd_steps",
+        "iqr_q25_steps",
+        "iqr_q75_steps",
+        "p95_ttd_steps",
+        "p99_ttd_steps",
+        "mean_cross_kb",
     ])?;
+    // Supplementary ECDF (censoring aware: CDF = 1 - Kaplan-Meier survival) for
+    // every E1 cell, the per-cell distribution the examiner asks for in a CSV.
+    let mut ecdfw = csv::Writer::from_path(format!("{out}/ecdf_e1.csv"))?;
+    ecdfw.write_record(["placement", "part_len", "ttd_steps", "ecdf"])?;
 
     // plot data files
     let mut f_ttd = fs::File::create(format!("{out}/figdata/e1_edge_median_ttd.dat"))?;
@@ -169,9 +197,18 @@ fn main() -> Result<()> {
     let mut f_edge = fs::File::create(format!("{out}/figdata/e1_edge_success.dat"))?;
     let mut f_cloud = fs::File::create(format!("{out}/figdata/e1_cloud_success.dat"))?;
     writeln!(f_ttd, "part_sec central_naive central_sf edge_local hybrid")?;
-    writeln!(f_cttd, "part_sec central_naive central_sf edge_local hybrid")?;
-    writeln!(f_edge, "part_sec central_naive central_sf edge_local hybrid")?;
-    writeln!(f_cloud, "part_sec central_naive central_sf edge_local hybrid")?;
+    writeln!(
+        f_cttd,
+        "part_sec central_naive central_sf edge_local hybrid"
+    )?;
+    writeln!(
+        f_edge,
+        "part_sec central_naive central_sf edge_local hybrid"
+    )?;
+    writeln!(
+        f_cloud,
+        "part_sec central_naive central_sf edge_local hybrid"
+    )?;
 
     // Collect per (placement, part) stats and the plot columns.
     let mut edge_ttd_col: BTreeMap<(String, usize), f64> = BTreeMap::new();
@@ -200,9 +237,22 @@ fn main() -> Result<()> {
             let (cp, clo, chi) = wilson_interval(cdiag, cloud.len().max(1), Z);
 
             let cens: Vec<Censored> = grp.iter().map(|r| censored_of(r)).collect();
+            let (km_curve, km_med) = kaplan_meier(&cens);
+            let q25 = km_quantile(&cens, 0.25).unwrap_or(f64::NAN);
+            let q75 = km_quantile(&cens, 0.75).unwrap_or(f64::NAN);
             let p95 = km_quantile(&cens, 0.95).unwrap_or(f64::NAN);
-            let mean_kb =
-                grp.iter().map(|r| r.cross_bytes as f64).sum::<f64>() / n as f64 / 1024.0;
+            let p99 = km_quantile(&cens, 0.99).unwrap_or(f64::NAN);
+            let mean_kb = grp.iter().map(|r| r.cross_bytes as f64).sum::<f64>() / n as f64 / 1024.0;
+
+            // Per-cell ECDF: CDF = 1 - S(t) at each Kaplan-Meier step.
+            for (t, s) in &km_curve {
+                ecdfw.write_record([
+                    pl.to_string(),
+                    pt.to_string(),
+                    format!("{t:.1}"),
+                    format!("{:.4}", 1.0 - s),
+                ])?;
+            }
 
             // Per-side median time to diagnosis (the symmetric story: central
             // grows for edge faults, edge-local grows for cloud faults).
@@ -231,12 +281,17 @@ fn main() -> Result<()> {
                 format!("{:.1}", pct(chi)),
                 fmt_opt(emed),
                 fmt_opt(cmed),
+                fmt_opt(km_med),
+                fmt_opt(q25),
+                fmt_opt(q75),
                 fmt_opt(p95),
+                fmt_opt(p99),
                 format!("{mean_kb:.2}"),
             ])?;
         }
     }
     e1w.flush()?;
+    ecdfw.flush()?;
 
     // Write the plot columns (one row per partition).
     for &pt in &parts {
@@ -246,7 +301,11 @@ fn main() -> Result<()> {
                 .iter()
                 .map(|p| {
                     let v = m.get(&(p.to_string(), pt)).copied().unwrap_or(f64::NAN);
-                    if v.is_nan() { "nan".to_string() } else { format!("{v:.2}") }
+                    if v.is_nan() {
+                        "nan".to_string()
+                    } else {
+                        format!("{v:.2}")
+                    }
                 })
                 .collect::<Vec<_>>()
                 .join(" ")
@@ -256,6 +315,13 @@ fn main() -> Result<()> {
         writeln!(f_edge, "{sec:.1} {}", col(&edge_succ_col))?;
         writeln!(f_cloud, "{sec:.1} {}", col(&cloud_succ_col))?;
     }
+
+    // Self-contained results figure (no TeX or gnuplot needed by the one command):
+    // median time to diagnosis against partition length, edge-side and cloud-side
+    // faults, on a log y axis and a proportional x axis, censored medians drawn as
+    // hollow markers at the ceiling.
+    let svg = results_svg(&placements, &parts, &edge_ttd_col, &cloud_ttd_col);
+    fs::write(format!("{out}/fig_sovloc_results.svg"), svg)?;
 
     // ---- Headline numbers for the manuscript ---------------------------------
     let longest = *parts.last().unwrap();
@@ -275,13 +341,17 @@ fn main() -> Result<()> {
     // C4: edge-local vs central-sf edge-fault censored TtD at the longest partition.
     let edge_cens_el: Vec<Censored> = e1
         .iter()
-        .filter(|r| r.placement == "edge-local" && r.part_len == longest && r.culprit_side == "edge")
-        .map(|r| censored_of(r))
+        .filter(|r| {
+            r.placement == "edge-local" && r.part_len == longest && r.culprit_side == "edge"
+        })
+        .map(censored_of)
         .collect();
     let edge_cens_sf: Vec<Censored> = e1
         .iter()
-        .filter(|r| r.placement == "central-sf" && r.part_len == longest && r.culprit_side == "edge")
-        .map(|r| censored_of(r))
+        .filter(|r| {
+            r.placement == "central-sf" && r.part_len == longest && r.culprit_side == "edge"
+        })
+        .map(censored_of)
         .collect();
     let (lr_chi, lr_p) = logrank(&edge_cens_el, &edge_cens_sf);
 
@@ -289,9 +359,10 @@ fn main() -> Result<()> {
     let slope_pts = |pl: &str| -> (Vec<f64>, Vec<f64>) {
         let mut xs = Vec::new();
         let mut ys = Vec::new();
-        for r in e1.iter().filter(|r| {
-            r.placement == pl && r.culprit_side == "edge" && r.diagnosed
-        }) {
+        for r in e1
+            .iter()
+            .filter(|r| r.placement == pl && r.culprit_side == "edge" && r.diagnosed)
+        {
             xs.push(r.part_len as f64);
             ys.push(r.ttd_steps.unwrap_or(0.0));
         }
@@ -305,7 +376,12 @@ fn main() -> Result<()> {
     // ---- E2 ablation: PPR vs argmax top-1 accuracy, paired by seed -----------
     let mut e2w = csv::Writer::from_path(format!("{out}/summary_e2.csv"))?;
     e2w.write_record([
-        "topology", "fault", "n", "argmax_top1_pct", "ppr_top1_pct", "ppr_minus_argmax_pct",
+        "topology",
+        "fault",
+        "n",
+        "argmax_top1_pct",
+        "ppr_top1_pct",
+        "ppr_minus_argmax_pct",
     ])?;
     let mut topos: Vec<String> = e2.iter().map(|r| r.topology.clone()).collect();
     topos.sort();
@@ -360,7 +436,8 @@ fn main() -> Result<()> {
         }
     }
     e2w.flush()?;
-    let (c5_diff, c5_lo, c5_hi) = bootstrap_ci(&ppr_minus_argmax, mean, N_BOOT, 0.025, BOOT_SEED + 2);
+    let (c5_diff, c5_lo, c5_hi) =
+        bootstrap_ci(&ppr_minus_argmax, mean, N_BOOT, 0.025, BOOT_SEED + 2);
     // p-value for C5 via the bootstrap (two-sided).
     let c5_p = {
         let mut rng = XorShift64::new(BOOT_SEED + 3);
@@ -384,7 +461,12 @@ fn main() -> Result<()> {
 
     // ---- E4 telemetry cost: mean cross KB per (placement, services, rate) ----
     let mut e4w = csv::Writer::from_path(format!("{out}/summary_e4.csv"))?;
-    e4w.write_record(["placement", "n_services", "sample_every_hz", "mean_cross_kb"])?;
+    e4w.write_record([
+        "placement",
+        "n_services",
+        "sample_every_hz",
+        "mean_cross_kb",
+    ])?;
     let mut e4keys: Vec<(String, usize, usize)> = e4
         .iter()
         .map(|r| (r.placement.clone(), r.n_services, r.sample_every))
@@ -398,15 +480,28 @@ fn main() -> Result<()> {
             .collect();
         let kb = grp.iter().map(|r| r.cross_bytes as f64).sum::<f64>() / grp.len() as f64 / 1024.0;
         let hz = 10.0 / *se as f64; // 100 ms steps -> 10 Hz at sample_every=1
-        e4w.write_record([pl.clone(), ns.to_string(), format!("{hz:.0}"), format!("{kb:.2}")])?;
+        e4w.write_record([
+            pl.clone(),
+            ns.to_string(),
+            format!("{hz:.0}"),
+            format!("{kb:.2}"),
+        ])?;
     }
     e4w.flush()?;
 
     // ---- E7 scale: median TtD + success + bytes per (placement, services) ----
     let mut e7w = csv::Writer::from_path(format!("{out}/summary_e7.csv"))?;
-    e7w.write_record(["placement", "n_services", "success_pct", "median_ttd_steps", "mean_cross_kb"])?;
-    let mut e7keys: Vec<(String, usize)> =
-        e7.iter().map(|r| (r.placement.clone(), r.n_services)).collect();
+    e7w.write_record([
+        "placement",
+        "n_services",
+        "success_pct",
+        "median_ttd_steps",
+        "mean_cross_kb",
+    ])?;
+    let mut e7keys: Vec<(String, usize)> = e7
+        .iter()
+        .map(|r| (r.placement.clone(), r.n_services))
+        .collect();
     e7keys.sort();
     e7keys.dedup();
     for (pl, ns) in &e7keys {
@@ -474,7 +569,10 @@ fn main() -> Result<()> {
         c5_diff, c5_lo, c5_hi, c5_p
     ));
     stats.push_str("\nHolm correction over the difference-test family (C1, C4, C5):\n");
-    for (i, (name, p)) in [("C1", sf_sp), ("C4", lr_p), ("C5", c5_p)].iter().enumerate() {
+    for (i, (name, p)) in [("C1", sf_sp), ("C4", lr_p), ("C5", c5_p)]
+        .iter()
+        .enumerate()
+    {
         stats.push_str(&format!(
             "  {name}: raw p={:.4}, Holm-adjusted p={:.4}, reject at 0.05: {}\n",
             p, holm_adj[i].0, holm_adj[i].1
@@ -490,7 +588,10 @@ fn main() -> Result<()> {
     // ---- numbers.tex ---------------------------------------------------------
     let m = |name: &str, val: String| format!("\\newcommand{{\\{name}}}{{{val}}}\n");
     numbers.push_str("% Auto-generated by the analysis binary. Do not edit by hand.\n");
-    numbers.push_str(&m("numTotalRuns", format!("{}", e1.len() + e2.len() + e4.len() + e7.len())));
+    numbers.push_str(&m(
+        "numTotalRuns",
+        format!("{}", e1.len() + e2.len() + e4.len() + e7.len()),
+    ));
     numbers.push_str(&m("numEoneRuns", format!("{}", e1.len())));
     numbers.push_str(&m("partLongestSec", format!("{:.0}", longest as f64 * 0.1)));
     numbers.push_str(&m("sfEdgeSlope", format!("{sf_slope:.3}")));
@@ -505,7 +606,10 @@ fn main() -> Result<()> {
     numbers.push_str(&m("bytesRatioHybrid", format!("{ratio_hy:.0}")));
     fs::write(format!("{out}/numbers.tex"), &numbers)?;
 
-    println!("Analysis written to {out}/ (summary_e1..e7.csv, stats.txt, numbers.tex, figdata/).");
+    println!(
+        "Analysis written to {out}/ (summary_e1..e7.csv, ecdf_e1.csv, stats.txt, numbers.tex, \
+         figdata/, fig_sovloc_results.svg)."
+    );
     println!("\n{stats}");
     Ok(())
 }
@@ -530,4 +634,181 @@ fn fmt_p(p: f64) -> String {
 #[allow(dead_code)]
 fn p95_of(xs: &[f64]) -> f64 {
     quantile(xs, 0.95)
+}
+
+/// Build the two-panel results figure as a dependency-free SVG. Each panel plots
+/// median time to diagnosis (log y, steps) against partition length (linear x,
+/// seconds) for the four placements. A censored median (not reached) is drawn as
+/// a hollow marker at the top of the axis rather than silently dropped.
+fn results_svg(
+    placements: &[&str],
+    parts: &[usize],
+    edge: &BTreeMap<(String, usize), f64>,
+    cloud: &BTreeMap<(String, usize), f64>,
+) -> String {
+    // colour and label per placement
+    let style = |pl: &str| -> (&'static str, &'static str) {
+        match pl {
+            "central-naive" => ("#8c8c8c", "central naive"),
+            "central-sf" => ("#d62728", "central store-and-forward"),
+            "edge-local" => ("#1f77b4", "edge local"),
+            "hybrid" => ("#2ca02c", "hybrid"),
+            _ => ("#000000", "other"),
+        }
+    };
+    let max_sec = (*parts.last().unwrap_or(&0) as f64) * 0.1;
+    let ymax = 10_000.0_f64; // log decades 1..10000
+    let log_ymax = ymax.log10();
+
+    // panel geometry
+    let (pw, ph) = (300.0_f64, 300.0_f64); // plot area
+    let (ml, mt) = (58.0_f64, 34.0_f64); // left/top margin inside a panel
+    let gap = 60.0_f64; // gap between the two panels
+    let panel_w = ml + pw + 24.0;
+    let total_w = panel_w * 2.0 + gap;
+    let total_h = mt + ph + 120.0; // room for x labels + legend
+
+    let x_px = |x0: f64, sec: f64| x0 + ml + (sec / max_sec.max(1.0)) * pw;
+    let y_px = |steps: f64| {
+        let s = steps.max(1.0).min(ymax);
+        mt + ph - (s.log10() / log_ymax) * ph
+    };
+
+    let mut s = String::new();
+    s.push_str(&format!(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{total_w:.0}\" height=\"{total_h:.0}\" \
+         viewBox=\"0 0 {total_w:.0} {total_h:.0}\" font-family=\"Helvetica,Arial,sans-serif\">\n"
+    ));
+    s.push_str(&format!(
+        "<rect width=\"{total_w:.0}\" height=\"{total_h:.0}\" fill=\"white\"/>\n"
+    ));
+
+    for (panel, (data, title)) in [(edge, "Edge-side fault"), (cloud, "Cloud-side fault")]
+        .iter()
+        .enumerate()
+    {
+        let x0 = panel as f64 * (panel_w + gap);
+        // panel title
+        s.push_str(&format!(
+            "<text x=\"{:.0}\" y=\"{:.0}\" text-anchor=\"middle\" font-size=\"15\">{}</text>\n",
+            x0 + ml + pw / 2.0,
+            mt - 14.0,
+            title
+        ));
+        // y grid + labels (log decades)
+        for d in 0..=4 {
+            let steps = 10f64.powi(d);
+            let y = y_px(steps);
+            s.push_str(&format!(
+                "<line x1=\"{:.1}\" y1=\"{:.1}\" x2=\"{:.1}\" y2=\"{:.1}\" stroke=\"#e6e6e6\"/>\n",
+                x0 + ml,
+                y,
+                x0 + ml + pw,
+                y
+            ));
+            s.push_str(&format!(
+                "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"end\" font-size=\"11\">{}</text>\n",
+                x0 + ml - 6.0,
+                y + 3.0,
+                steps as i64
+            ));
+        }
+        // x axis ticks (proportional, seconds)
+        let xticks = [0.0, max_sec * 0.25, max_sec * 0.5, max_sec * 0.75, max_sec];
+        for t in xticks {
+            let x = x_px(x0, t);
+            s.push_str(&format!(
+                "<line x1=\"{x:.1}\" y1=\"{:.1}\" x2=\"{x:.1}\" y2=\"{:.1}\" stroke=\"#cccccc\"/>\n",
+                mt + ph,
+                mt + ph + 4.0
+            ));
+            s.push_str(&format!(
+                "<text x=\"{x:.1}\" y=\"{:.1}\" text-anchor=\"middle\" font-size=\"11\">{:.0}</text>\n",
+                mt + ph + 18.0,
+                t
+            ));
+        }
+        // axis box
+        s.push_str(&format!(
+            "<rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\" fill=\"none\" stroke=\"#333\"/>\n",
+            x0 + ml, mt, pw, ph
+        ));
+        // axis titles
+        s.push_str(&format!(
+            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" font-size=\"12\">Partition length (s)</text>\n",
+            x0 + ml + pw / 2.0,
+            mt + ph + 36.0
+        ));
+        s.push_str(&format!(
+            "<text x=\"{:.1}\" y=\"{:.1}\" text-anchor=\"middle\" font-size=\"12\" transform=\"rotate(-90 {:.1} {:.1})\">Median time to diagnosis (steps)</text>\n",
+            x0 + 14.0,
+            mt + ph / 2.0,
+            x0 + 14.0,
+            mt + ph / 2.0
+        ));
+
+        // one polyline + markers per placement
+        for pl in placements {
+            let (colour, _) = style(pl);
+            let mut pts: Vec<(f64, f64, bool)> = Vec::new(); // x, y, censored
+            for &pt in parts {
+                let sec = pt as f64 * 0.1;
+                let v = data.get(&(pl.to_string(), pt)).copied().unwrap_or(f64::NAN);
+                let censored = v.is_nan();
+                let steps = if censored { ymax } else { v };
+                pts.push((x_px(x0, sec), y_px(steps), censored));
+            }
+            let path: String = pts
+                .iter()
+                .enumerate()
+                .map(|(i, (x, y, _))| {
+                    format!("{}{:.1},{:.1}", if i == 0 { "M" } else { "L" }, x, y)
+                })
+                .collect::<Vec<_>>()
+                .join(" ");
+            s.push_str(&format!(
+                "<path d=\"{path}\" fill=\"none\" stroke=\"{colour}\" stroke-width=\"1.8\"/>\n"
+            ));
+            for (x, y, censored) in &pts {
+                if *censored {
+                    s.push_str(&format!(
+                        "<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"3.4\" fill=\"white\" stroke=\"{colour}\" stroke-width=\"1.6\"/>\n"
+                    ));
+                } else {
+                    s.push_str(&format!(
+                        "<circle cx=\"{x:.1}\" cy=\"{y:.1}\" r=\"3\" fill=\"{colour}\"/>\n"
+                    ));
+                }
+            }
+        }
+    }
+
+    // legend across the bottom
+    let ly = mt + ph + 64.0;
+    let mut lx = ml;
+    for pl in placements {
+        let (colour, label) = style(pl);
+        s.push_str(&format!(
+            "<circle cx=\"{:.1}\" cy=\"{:.1}\" r=\"4\" fill=\"{colour}\"/>\n",
+            lx,
+            ly - 4.0
+        ));
+        s.push_str(&format!(
+            "<text x=\"{:.1}\" y=\"{:.1}\" font-size=\"12\">{}</text>\n",
+            lx + 10.0,
+            ly,
+            label
+        ));
+        lx += 190.0;
+        if lx > total_w - 150.0 {
+            lx = ml;
+        }
+    }
+    s.push_str(&format!(
+        "<text x=\"{:.1}\" y=\"{:.1}\" font-size=\"11\" fill=\"#555\">Hollow marker: median not reached within the run (censored).</text>\n",
+        ml,
+        ly + 22.0
+    ));
+    s.push_str("</svg>\n");
+    s
 }

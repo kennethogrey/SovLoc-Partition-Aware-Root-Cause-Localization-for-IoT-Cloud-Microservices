@@ -138,7 +138,13 @@ pub fn bootstrap_ci<F: Fn(&[f64]) -> f64>(
 
 /// Paired bootstrap for the mean difference `a[i] - b[i]` of two placements run
 /// on the same seeds. Returns (mean diff, lo, hi).
-pub fn paired_diff_ci(a: &[f64], b: &[f64], n_boot: usize, alpha: f64, seed: u64) -> (f64, f64, f64) {
+pub fn paired_diff_ci(
+    a: &[f64],
+    b: &[f64],
+    n_boot: usize,
+    alpha: f64,
+    seed: u64,
+) -> (f64, f64, f64) {
     assert_eq!(a.len(), b.len());
     let diffs: Vec<f64> = a.iter().zip(b).map(|(x, y)| x - y).collect();
     bootstrap_ci(&diffs, mean, n_boot, alpha, seed)
@@ -150,7 +156,11 @@ pub fn paired_diff_ci(a: &[f64], b: &[f64], n_boot: usize, alpha: f64, seed: u64
 /// 0.5, i.e. more than half the runs are censored before the event).
 pub fn kaplan_meier(data: &[Censored]) -> (Vec<(f64, f64)>, f64) {
     let mut d = data.to_vec();
-    d.sort_by(|a, b| a.time.partial_cmp(&b.time).unwrap_or(std::cmp::Ordering::Equal));
+    d.sort_by(|a, b| {
+        a.time
+            .partial_cmp(&b.time)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let n = d.len();
     let mut curve = Vec::new();
     let mut surv = 1.0;
@@ -235,7 +245,11 @@ pub fn tost_means(a: &[f64], b: &[f64], margin: f64) -> (f64, f64, f64) {
     if se <= 0.0 {
         // No variance: equivalent iff the difference is strictly inside margin.
         let inside = diff.abs() < margin;
-        return (diff, if inside { 0.0 } else { 1.0 }, if inside { 0.0 } else { 1.0 });
+        return (
+            diff,
+            if inside { 0.0 } else { 1.0 },
+            if inside { 0.0 } else { 1.0 },
+        );
     }
     // H0_lower: diff <= -margin ; reject if (diff + margin)/se is large positive.
     let t_lower = (diff + margin) / se;
@@ -260,7 +274,11 @@ fn sample_var(xs: &[f64]) -> f64 {
 pub fn holm(pvalues: &[f64], alpha: f64) -> Vec<(f64, bool)> {
     let m = pvalues.len();
     let mut order: Vec<usize> = (0..m).collect();
-    order.sort_by(|&i, &j| pvalues[i].partial_cmp(&pvalues[j]).unwrap_or(std::cmp::Ordering::Equal));
+    order.sort_by(|&i, &j| {
+        pvalues[i]
+            .partial_cmp(&pvalues[j])
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     let mut out = vec![(0.0, false); m];
     let mut running_max = 0.0_f64;
     for (rank, &idx) in order.iter().enumerate() {
@@ -297,7 +315,10 @@ mod tests {
     fn km_median_on_uncensored_data() {
         // Event times 1..=10, all observed -> median survival 5 or 6.
         let data: Vec<Censored> = (1..=10)
-            .map(|t| Censored { time: t as f64, event: true })
+            .map(|t| Censored {
+                time: t as f64,
+                event: true,
+            })
             .collect();
         let (_curve, med) = kaplan_meier(&data);
         assert!((5.0..=6.0).contains(&med), "median={med}");
@@ -306,7 +327,10 @@ mod tests {
     #[test]
     fn logrank_identical_groups_is_insignificant() {
         let a: Vec<Censored> = (1..=30)
-            .map(|t| Censored { time: (t % 10 + 1) as f64, event: true })
+            .map(|t| Censored {
+                time: (t % 10 + 1) as f64,
+                event: true,
+            })
             .collect();
         let b = a.clone();
         let (chi2, p) = logrank(&a, &b);
@@ -316,8 +340,18 @@ mod tests {
 
     #[test]
     fn logrank_separated_groups_is_significant() {
-        let a: Vec<Censored> = (0..30).map(|_| Censored { time: 2.0, event: true }).collect();
-        let b: Vec<Censored> = (0..30).map(|_| Censored { time: 50.0, event: true }).collect();
+        let a: Vec<Censored> = (0..30)
+            .map(|_| Censored {
+                time: 2.0,
+                event: true,
+            })
+            .collect();
+        let b: Vec<Censored> = (0..30)
+            .map(|_| Censored {
+                time: 50.0,
+                event: true,
+            })
+            .collect();
         let (chi2, p) = logrank(&a, &b);
         assert!(chi2 > 10.0, "chi2={chi2}");
         assert!(p < 0.01, "p={p}");
