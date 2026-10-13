@@ -1,7 +1,6 @@
-# Keep the Docker build context small and reproducible. The image needs the
-# Cargo workspace sources, the analysis script (analysis/), and the docker/
-# reproduction entry script. Everything below is rebuilt inside the container or
-# is produced at run time.
+# Keep the Docker build context small and reproducible. The image needs the Cargo
+# workspace sources, scripts/ (record_env.sh), and the docker/ reproduction entry
+# script. Everything below is rebuilt inside the container or produced at run time.
 target/
 .venv/
 .git/
