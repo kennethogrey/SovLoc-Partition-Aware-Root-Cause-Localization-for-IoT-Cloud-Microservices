@@ -1,351 +1,135 @@
 # SovLoc: partition aware root cause localization for IoT cloud microservices
 
-MCS 7101 Cloud Architecting and Engineering, midterm, topic Root Cause analysis of Failures in Internet of Things Cloud Microservices.
+Topic CTA-MSC-13, Root Cause Analysis of Failures in Internet of Things Cloud Microservices.
 Author: Kenneth Ogire, student number 2026/HD05/22778U, Group CTA-MSC-13, Makerere University.
 
-This repository is the reproducibility package for the midterm. It builds and
-runs entirely inside Docker, so the only thing you need on your machine is Docker
-with Compose v2. There is no local Rust or Python to install, and there is no
-"works on my machine". You clone the repository, run one command, and the same
-numbers come out.
+This repository is the open source implementation and reproducibility package for
+the study. It holds one non artificial intelligence root cause method run in four
+placements, a deterministic simulation that measures what each placement recovers
+under a network partition and at what byte cost, a production harness that runs the
+same split on real infrastructure, and a one command reproduction. Every number in
+the manuscript comes from a file this repository regenerates.
 
-## What it tests
+## What it studies
 
-SovLoc tests one falsifiable hypothesis about operational sovereignty under
-resource constraint:
+A failure in an IoT cloud application has to be diagnosed under jitter, loss, and
+partial partitions of the link between the constrained edge and the cloud. The same
+method, a robust change point detector that fixes when a fault began followed by a
+personalized PageRank walk over the service call graph that names the culprit, is
+run in four placements that differ only in where telemetry is buffered and when it
+is delivered:
 
-> On a resource constrained edge cluster with an intermittently partitioned
-> backhaul link, a decentralised, edge local root cause localization method
-> localizes the responsible microservice for a higher fraction of faults, and
-> with lower localization time, than a central cloud collector baseline, at
-> comparable per node cost.
+1. central naive: the cloud collector analyses, and edge telemetry is lost during a cut.
+2. central store and forward: the edge buffers and replays to the cloud on heal.
+3. edge local: a local collector analyses at the edge and ships a compact verdict.
+4. hybrid: the edge detects and ranks, and ships compact evidence for cloud review.
 
-Both methods run the same non-AI algorithm. A robust change point detector finds
-when a fault began, and personalized PageRank over the service call graph finds
-which service is the cause. The only thing that differs between the two methods
-is where the diagnosis runs, and therefore what telemetry stays visible when the
-edge to cloud link drops. That single difference is the whole result.
+Time to diagnosis and bytes on the wire are measured outcomes of the transport
+model and the partition length, not constants. The result is a measured trade off,
+not a tautology: for an edge side fault a central collector's time to diagnosis
+grows with the partition while an edge local collector stays flat, and the cost is
+symmetric, because for a cloud side fault the edge local collector is the one that
+waits out the cut. The hybrid is fast on both at a small fraction of the bytes.
+See `results/analysis/fig_sovloc_results.svg`.
 
 ## Requirements
 
-Only Docker with Compose v2. Nothing else. Check with:
+Either the pinned Rust toolchain, or just Docker.
 
-```bash
-docker --version
-docker compose version
-```
-
-The reproduction image installs the exact Rust compiler (pinned to 1.82.0 in
-`rust-toolchain.toml`) and Python with matplotlib inside the container, so your
-host stays clean.
+- Native: Rust 1.82.0 (pinned in `rust-toolchain.toml`; `rustup` installs it
+  automatically). No Python, no TeX. Check with `cargo --version`.
+- Container only: Docker with Compose v2. `docker --version && docker compose version`.
 
 ## The one command
 
-From a clean clone:
-
 ```bash
-./run.sh
+make reproduce
 ```
 
-`make` does the same thing. This builds the reproduction image and then, inside
-the container, it builds the Rust workspace, runs the unit tests, runs the seeded
-experiment (30 repetitions per configuration, seed 42), and computes the
-confidence intervals, the effect sizes, and the two figures. The results are
-written back to `./results` on your host.
+This builds the workspace, runs the five experiment families (E1 placement
+comparison, E2 detector and ranker ablation, E4 telemetry cost, E7 scale, FP false
+alarm sweep) with seed 42, and writes the summary tables, the survival statistics,
+the LaTeX macros, and the figure. The experiment is deterministic, so the same
+command always produces the same numbers. Run `make test` for the unit tests and
+`make env` to record the machine to `results/environment.txt`.
 
-Expected runtime on a normal laptop: the first build compiles the Rust
-dependencies inside Docker and takes a few minutes. After that the experiment and
-the analysis finish in seconds.
+Container path (nothing but Docker on the host): `./run.sh`.
 
 ## Where the numbers land
 
-Everything the manuscript reports comes from these files, all regenerated by the
-one command:
-
 | File | What it is |
 | --- | --- |
-| `results/raw.csv` | every single run, one row each |
-| `results/summary.csv` | the aggregated table |
-| `results/analysis_summary.md` | the results with 95 percent confidence intervals and effect sizes |
-| `results/fig_latency.png` | localization latency against partition duration, with error bars |
-| `results/fig_edge_success.png` | edge fault localization success against partition duration |
+| `results/raw_e1..e7.csv`, `raw_fp.csv` | every run, one row each (the raw record) |
+| `results/analysis/summary_e1..e7.csv` | the summary tables: success with Wilson intervals, Kaplan-Meier median, IQR, P95, P99, measured bytes |
+| `results/analysis/ecdf_e1.csv` | the per cell empirical CDF (censoring aware), supplementary |
+| `results/analysis/stats.txt` | the survival statistics: slopes with bootstrap CI, log-rank, TOST equivalence at partition zero, Holm correction |
+| `results/analysis/numbers.tex` | the LaTeX macros the manuscript cites, so no number is typed by hand |
+| `results/analysis/fig_sovloc_results.svg` | the results figure, generated from the run data |
+| `results/environment.txt` | the machine, kernel, and toolchain for this run |
 
-The experiment is seeded, so the same command always produces the same numbers.
-The headline is that at partition zero the two methods are statistically
-indistinguishable, which is the control. As the partition grows the central
-method's localization latency climbs from about 1.4 steps to 51.8 steps and its
-edge fault success then falls to 0 percent under the longest partition, while the
-edge local method stays flat at about one step and 100 percent.
+## Reproducibility and hosting
 
-## Seeing a real partition (the production tier)
+The build is pinned at three levels: `rust-toolchain.toml` fixes the compiler at
+1.82.0, `Cargo.lock` is committed, and the `Dockerfile` pins both base images by
+`@sha256` digest. The raw per run CSVs are committed, not only the summaries, and
+`results/environment.txt` records the hardware, kernel, and toolchain. GitHub
+Actions re-runs the suite and the Docker reproduction on every push. The release
+that matches the manuscript is the annotated tag `v2.0-revision`.
 
-The simulation is one tier. The other tier runs the same seven services and the
-same two collectors as real containers, so you can cut a real container from the
-network and watch the result hold on real infrastructure.
+## Production validation (E6)
 
-Bring the mesh up:
+The simulation is one tier. The production tier runs the same edge and cloud
+service split on real infrastructure, so the cloud side is genuinely remote from
+the edge side and a partition is a real network cut rather than an in process
+toggle. The cloud half (the cloud collector plus enrich, store, and alerting) runs
+on the platform; the edge half (the four edge services plus the edge collector) is
+driven by the harness; and the cut severs the edge to cloud link. During the cut
+the cloud collector still sees its three local cloud services, so "cloud sees 0 of
+7" is a measured outcome of the cut, not a guarantee of the topology.
 
-```bash
-make demo
-# same as: ./scripts/compose_up.sh
-```
-
-In a second terminal, cut the cloud collector from the network for 40 seconds,
-which is a genuine symmetric partition, not an in process toggle:
-
-```bash
-make partition
-# same as: ./scripts/partition_docker.sh 40
-```
-
-Optionally apply a real degraded link with tc and netem inside the container:
+`RUNBOOK.md` has the step by step procedure for all four mandatory platforms:
+single node Rust, k3s, OpenStack (two VMs), and CRANE Cloud. At least thirty
+independent partition events per platform, with random culprits and cut lengths
+from 10 to 120 seconds, are recorded one row per event and compared against the
+simulation within the plus or minus twenty percent tolerance:
 
 ```bash
-make netem
-# same as: ./scripts/netem.sh cloud add 250 8 512
+PLATFORM=single-node scripts/e6/calibrate.sh          # E3: measure the real tick
+PLATFORM=single-node EVENTS=30 scripts/e6/run_events.sh
+scripts/e6/compare_prod.sh results/production/single-node.csv
 ```
-
-Then read the two collectors:
-
-```bash
-docker compose logs cloud edge | grep -E "top-1|LOCALIZATION|visible"
-```
-
-During the real partition the cloud collector reports `visible=0/7` for the whole
-window while the edge collector holds the culprit at rank 1. That is the same
-result the simulation predicts, now on real container networking.
-
-Always bring the mesh up with `make demo` (or `make demo-live`), never with a bare
-`docker compose up`. The `make` targets set the shared clock. Without it the
-services fall back to no clock, start healthy, and the scheduled fault does not
-fire.
-
-## Running the real Internet test on Crane Cloud
-
-A third tier separates the two sides across the public Internet. The cloud
-collector runs on Crane Cloud and the edge stays on this machine, so the
-partition is a real cut of a real wide area link rather than a container
-disconnect on one host. The full runbook is in `scripts/cranecloud/README.md`.
-The commands below each start from the project directory, so they run from
-wherever your shell happens to be. Replace `<dockerhub-user>` with your Docker
-Hub username and `<app>.cranecloud.io` with the public URL your Crane Cloud app
-is given.
-
-Build the image and push it to Docker Hub (this needs your Docker Hub login):
-
-```bash
-cd /home/ogrey/Development/masters/sovloc && DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v1
-```
-
-Deploy it on Crane Cloud as a single application, with image
-`<dockerhub-user>/sovloc-mesh:v1`, port `8080`, the entry command left blank, and
-one replica. When it is running, copy its public URL and confirm it is reachable
-across the Internet:
-
-```bash
-cd /home/ogrey/Development/masters/sovloc && ./scripts/cranecloud/probe.sh https://<app>.cranecloud.io
-```
-
-Run the mesh across the Internet. The edge collector and the seven services run
-here and stream their telemetry to the Crane Cloud collector, and both sides are
-captured under `results/`:
-
-```bash
-cd /home/ogrey/Development/masters/sovloc && ./scripts/cranecloud/run_edge_local.sh http://<app>.cranecloud.io validate 200
-```
-
-In a second terminal, cut the real link to the cloud for 60 seconds and then heal
-it, which is a genuine partition of the wide area path (this needs sudo, because
-it changes the routing table):
-
-```bash
-cd /home/ogrey/Development/masters/sovloc && sudo ./scripts/cranecloud/partition_link.sh http://<app>.cranecloud.io 45 60
-```
-
-During the cut the Crane Cloud collector is unreachable and its view falls to
-zero of seven services, while the edge collector holds the culprit at rank one
-with all seven services visible, and the cloud collector recovers once the link
-heals. The captured run this repository ships is
-`results/production_crane_cloud_edge.log` for the edge collector and
-`results/production_crane_cloud_status.csv` for the Crane Cloud collector.
-
-## Moving the fault live
-
-You can also start the mesh healthy and inject a fault into any service while it
-runs, then watch the localizer move its top-1 onto that service in real time.
-
-```bash
-make demo-live                 # brings up the mesh with no fault
-# wait about ten seconds for the collectors to freeze a clean baseline, then:
-make inject SERVICE=store      # fault store now
-make inject SERVICE=gateway    # move the fault to gateway
-make clear                     # heal, back to no fault
-```
-
-Within a second or two of an injection both collectors print
-`top-1 = <service>`, the heartbeat shows `culprit(<service>)=rank 1`, and a fresh
-`LOCALIZATION_TIME_MS` line reports how long the localizer took to lock on. The
-`make partition` and `make netem` commands work on this live mesh too, so you can
-inject a fault and then cut the link and watch the edge hold the culprit while the
-cloud goes blind. Under the hood, `make inject` runs `mesh inject` inside the
-`cloud` container, which reaches every service on its control port over the
-compose network.
-
-## Running one part at a time
-
-If you want just the experiment or just the tests, run them inside the
-reproduction image without touching your host:
-
-```bash
-docker build --target reproduce -t sovloc-reproduce .
-docker run --rm sovloc-reproduce cargo test --workspace
-docker run --rm -v "$PWD/results:/app/results" sovloc-reproduce \
-  cargo run -p sim --release -- --reps 30 --seed 42 --out-dir results
-docker run --rm -v "$PWD/results:/app/results" sovloc-reproduce python3 analysis/analyze.py
-```
-
-## Configurable experiments
-
-The default experiment is a single edge side against the cloud. To study larger
-and uneven deployments, the simulation and the mesh both read an optional YAML
-scenario file that sets the number of edge devices, the microservices on each
-device, and a separate partition time per device. Nothing about the SovLoc
-algorithm changes, only the topology it runs over does. When no scenario is
-given, both tiers behave exactly as before, so the headline numbers in
-`results/` still reproduce byte for byte.
-
-A scenario looks like this (`scenarios/five-edge-20.yaml`):
-
-```yaml
-name: five-edge-20
-cloud_services: [enrich, store, alerting]
-edge_devices:
-  - id: edge-1
-    services: [sensor-gateway, ingest]
-    partition_time: 10            # seconds this device is cut from the cloud
-  - id: edge-2
-    services: [validate, device-registry, dedup, calibrate, buffer]
-    partition_time: 20
-  # edge-3, edge-4, edge-5, each with its own services and partition time
-```
-
-A device can also list `service_count: N` instead of names, and the cloud can
-use `cloud_service_count: N`. Optional `number_of_edge_devices` and
-`total_microservices` fields are cross checked against what the file actually
-lists, and the loader rejects duplicate names, negative partition times, empty
-devices, and other inconsistencies with a clear message rather than guessing.
-
-Run a scenario in the simulation:
-
-```bash
-cargo run -p sim --release -- --scenario scenarios/five-edge-20.yaml --out-dir results_five
-```
-
-It prints a per-device table and writes `raw.csv` (which `analysis/analyze.py`
-reads unchanged) and `device_summary.csv`. The result for every edge device is
-the same story as the single-edge case: during its own partition the central
-collector cannot localize a fault on that device, so its localization time tracks
-that device's partition length, while the edge-local method localizes in about
-one step on every device regardless of how long the cut lasts.
-
-For the real mesh, generate a Docker deployment for the scenario and bring it up:
-
-```bash
-cargo build --release -p mesh
-cargo run -p mesh --release -- gen-compose --scenario scenarios/five-edge-20.yaml \
-  --out docker-compose.generated.yml
-SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) docker compose -f docker-compose.generated.yml up --build
-```
-
-That runs one container per microservice, one collector per edge device, and one
-cloud collector, with each device cut from the cloud for its own partition time.
-The scenarios are also baked into the runtime image, so the Crane Cloud tier can
-run a configured topology by pointing its collector at
-`--scenario /app/scenarios/five-edge-20.yaml`.
 
 ## What is inside
 
 | Path | What it is |
 | --- | --- |
-| `crates/rca-core` | the non-AI RCA library: robust change point, robust scorer, personalized PageRank, unit tested |
-| `crates/scenario` | reads a YAML experiment file into a call graph with per-device placement and partition times, shared by the simulation and the mesh, unit tested |
-| `crates/sim` | the deterministic, seeded simulation that produces the headline results |
-| `crates/mesh` | the real networked mesh (tokio and TCP) with two live collectors, the production tier |
-| `scenarios/` | example experiment files: the baseline single-edge system, five edge devices with twenty microservices, and ten edge devices with thirty |
-| `analysis/analyze.py` | confidence intervals, effect sizes, and the two plots from `results/raw.csv`, standard library plus matplotlib |
-| `Dockerfile`, `docker/reproduce.sh` | the reproduction image and the in container reproduction steps |
-| `docker-compose.yml`, `scripts/` | the real multi container deployment, the real partition, and the tc and netem degradation |
-| `scripts/cranecloud/` | the real-Internet tier: deploy the cloud collector to Crane Cloud, keep the edge local, and run the mesh across the real network (see its `README.md`) |
-| `.github/workflows/ci.yml` | the pipeline that re-runs the suite on every push |
-| `results/` | the committed raw data and figures, and the two captured real run logs |
+| `crates/rca-core` | the non artificial intelligence RCA library: robust change point, robust scorer, personalized PageRank, and the survival statistics (Wilson, Kaplan-Meier, log-rank, TOST, Holm, bootstrap), unit tested |
+| `crates/sim` | the deterministic seeded simulation (`sim`) and the analysis binary (`analysis`) that turns the raw CSVs into tables, statistics, `numbers.tex`, and the figure |
+| `crates/mesh` | the real networked mesh: real services and two live collectors over TCP and HTTP, the production tier |
+| `crates/scenario` | reads a YAML topology (many edge devices, each with its own partition time) for the configurable mesh |
+| `scripts/e6/` | the E6 production harness: `run_events.sh`, `calibrate.sh` (E3), `compare_prod.sh`, and the per platform cut scripts |
+| `scripts/cranecloud/` | the CRANE Cloud real Internet tier: build and push, deploy, probe, and partition the link |
+| `deploy/k3s/`, `deploy/openstack/` | the cloud half manifests and runbooks for the cluster tiers |
+| `Dockerfile`, `docker/` | the pinned reproduction and runtime images |
+| `.github/workflows/ci.yml` | the pipeline that re-runs the suite and the Docker reproduction on every push |
+| `results/` | the committed raw data, the analysis outputs, and the recorded environment |
 
-## Reproducibility notes
+## Honest limits
 
-The build is pinned. `Cargo.lock` is committed and `rust-toolchain.toml` fixes
-the compiler at 1.82.0, so the same versions build every time. The Docker base
-images can be pinned by digest as well, and the Dockerfile explains how. The
-GitHub Actions workflow re-runs the core suite on every push, so a regression is
-caught immediately rather than at write up time.
-
-## Honesty notes
-
-The simulation numbers are modelled, with the assumptions documented in
-`crates/sim/src/main.rs`. They are fully reproducible, but they are a model, not
-a physical measurement. No performance number is invented. Every figure and table
-comes from the one command above.
-
-The in process partition, the real Docker partition, and the tc and netem
-degradation in this repository are all real network validation, but they run on
-one machine and the conditions are created and controlled.
-
-The real-Internet tier closes that gap. `scripts/cranecloud/` deploys the cloud
-collector to Crane Cloud and keeps the edge side local, so telemetry crosses the
-real Internet, and the exam's uncontrolled degraded-link trial is run over a real
-weak uplink such as a mobile hotspot, with the link trace logged. The tooling and
-the procedure live in this repository; the measured numbers from a run are saved
-under `results/realnet_*` and written into the manuscript only once the run has
-actually been done. No performance number is invented, and any result not yet
-measured is marked pending rather than filled in.
-
-## Known deviations
-
-The simulator reports localization time in 100 ms steps and the real collector
-runs on a 500 ms loop, so the absolute millisecond value is not expected to
-match. The quantity that should match is the fraction localized under partition,
-and it does. Also, `docker network disconnect` does not restore name based
-reconnection promptly on heal, so the container logs show the partition and the
-cloud going blind but not the recovery. The local process mesh shows the full
-cycle including recovery.
-
-## Reproducibility package checklist
-
-This repository is the reproducibility package the exam asks for. Each required
-item and where it is satisfied:
-
-| Requirement | Where it is satisfied |
-| --- | --- |
-| Public repository with a tagged release matching the manuscript results | this repository, tag `v1.0-midterm`, with `results/` matching the numbers in the manuscript |
-| A single documented reproduction command from a clean checkout | `./run.sh` (or `make`), see "The one command" above |
-| A Dockerfile pinning the exact toolchain and dependency versions | `Dockerfile` (Rust 1.82.0), `rust-toolchain.toml`, and the committed `Cargo.lock` |
-| Raw experimental data and the analysis script, not only the plots | `results/raw.csv` and `results/summary.csv`, analysed by `analysis/analyze.py` |
-| A README stating required hardware, expected runtime, and known deviations | the Requirements, Expected runtime, and Known deviations sections above |
+The simulation numbers are modelled from documented assumptions, not physically
+measured, and the simulated accuracy is high because the generator's ground truth
+is clean and the topologies are small; a harder public benchmark would score lower,
+and that external check is noted as remaining. The production harness and the cut
+are real network validation. Second coder agreement (Cohen's kappa), Raspberry Pi
+energy, and an uncontrolled rural link are not run here; each has a written protocol
+and stays an honest limitation rather than an invented number. The use of a
+generative AI assistant during preparation is disclosed in the manuscript.
 
 ## Release
-
-The tagged release `v1.0-midterm` matches the numbers reported in the submitted
-manuscript. To reproduce from the tag:
 
 ```bash
 git clone https://github.com/kennethogrey/SovLoc-Partition-Aware-Root-Cause-Localization-for-IoT-Cloud-Microservices.git sovloc
 cd sovloc
-git checkout v1.0-midterm
-./run.sh
-```
-
-The tag is annotated and placed on the commit whose `results/` match the
-manuscript:
-
-```bash
-git tag -a v1.0-midterm -m "MCS 7101 midterm submission"
-git push origin v1.0-midterm
+git checkout v2.0-revision
+make reproduce
 ```

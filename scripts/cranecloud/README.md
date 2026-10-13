@@ -63,7 +63,17 @@ a partial command crash-loops the container into `mesh` with no subcommand (the
 symptom is a Failed app and repeated help text in the logs). Optional env vars:
 `SOVLOC_STALE_MS` (default 3000), `SOVLOC_NAME` (default cloud), `PORT` (default 8080).
 
-Deploy, wait until the app is Running.
+For the E6 production validation, set one env var so the app runs the whole **cloud
+half** (the cloud collector plus enrich, store and alerting) rather than the
+collector alone, so the cloud collector still sees its three local cloud services
+(3/7) during a partition:
+
+| Env var | Value |
+| --- | --- |
+| `SOVLOC_ROLE` | `cloud-half` |
+
+Deploy, wait until the app is Running. For the full >= 30-event E6 procedure see
+`RUNBOOK.md` section C.4; the single-event demonstration below is a quick visual check.
 
 ## Step 5: get the public endpoint
 
