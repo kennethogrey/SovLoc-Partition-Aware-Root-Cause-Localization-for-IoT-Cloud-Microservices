@@ -1,0 +1,7 @@
+# E3 calibration for single-node
+recorded=2026-10-14T07:30:54Z
+cloud_url=http://127.0.0.1:8080
+per_hop_rtt_ms_median=0.35   # median of 20 HTTP round trips
+baseline_edge_ttd_ms_median=691   # 5 no-partition events
+sim_edge_local_median_steps=1.000
+ms_per_step=691.0   # used by compare_prod.sh to put sim and prod on one scale

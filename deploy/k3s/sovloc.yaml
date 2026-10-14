@@ -9,7 +9,7 @@
 #
 # Deploy:
 #   kubectl label node <cloud-node> sovloc-role=cloud          # optional pinning
-#   sed -i "s#IMAGE_PLACEHOLDER#<your-registry>/sovloc-mesh:<tag>#g" deploy/k3s/sovloc.yaml
+#   sed -i "s#kennethogrey/sovloc-mesh:v5#<your-registry>/sovloc-mesh:<tag>#g" deploy/k3s/sovloc.yaml
 #   kubectl apply -f deploy/k3s/sovloc.yaml
 #   kubectl get svc cloud-collector      # note the NodePort (http 30080)
 #   # the harness host then uses CLOUD_URL=http://<any-node-ip>:30080
@@ -40,7 +40,7 @@ spec:
       nodeSelector: { sovloc-role: cloud }
       containers:
         - name: collector
-          image: IMAGE_PLACEHOLDER
+          image: kennethogrey/sovloc-mesh:v5
           args: ["collector","--name","cloud","--http-port","8080","--port","7000","--control-port","9200","--stale-ms","3000"]
           ports: [{ containerPort: 8080 }, { containerPort: 9200 }]
 ---
@@ -56,7 +56,7 @@ spec:
       nodeSelector: { sovloc-role: cloud }
       containers:
         - name: service
-          image: IMAGE_PLACEHOLDER
+          image: kennethogrey/sovloc-mesh:v5
           args: ["service","--name","enrich","--culprit","none","--control-port","9114",
                  "--period-ms","200","--http-cloud","http://cloud-collector:8080"]
 ---
@@ -72,7 +72,7 @@ spec:
       nodeSelector: { sovloc-role: cloud }
       containers:
         - name: service
-          image: IMAGE_PLACEHOLDER
+          image: kennethogrey/sovloc-mesh:v5
           args: ["service","--name","store","--culprit","none","--control-port","9115",
                  "--period-ms","200","--http-cloud","http://cloud-collector:8080"]
 ---
@@ -88,6 +88,6 @@ spec:
       nodeSelector: { sovloc-role: cloud }
       containers:
         - name: service
-          image: IMAGE_PLACEHOLDER
+          image: kennethogrey/sovloc-mesh:v5
           args: ["service","--name","alerting","--culprit","none","--control-port","9116",
                  "--period-ms","200","--http-cloud","http://cloud-collector:8080"]

@@ -1,0 +1,6 @@
+platform,event,culprit,culprit_side,partition_sec,edge_localized,edge_ttd_ms,cloud_localized_during_cut,cloud_min_visible,cross_bytes
+single-node__calib,1,alerting,cloud,0,1,192,1,7,NA
+single-node__calib,2,gateway,edge,0,1,691,1,7,NA
+single-node__calib,3,gateway,edge,0,1,691,1,7,NA
+single-node__calib,4,enrich,cloud,0,1,690,1,7,NA
+single-node__calib,5,enrich,cloud,0,1,691,1,7,NA
