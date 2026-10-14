@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 rca-core   = { path = "../rca-core" }
+scenario   = { path = "../scenario" }
 rand       = { workspace = true }
 rand_distr = { workspace = true }
 serde      = { workspace = true }

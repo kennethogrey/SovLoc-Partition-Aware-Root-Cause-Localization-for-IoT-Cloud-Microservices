@@ -1,3 +1,5 @@
+
+EM multi-edge (103 services, 5 edge devices): central-naive edge-fault TtD slope 6.67 steps per second of cut, edge-local slope 0.00; mean bytes central-sf/edge-local = 11.1x, central-sf/hybrid = 48647x
 SovLoc statistics report
 ========================
 

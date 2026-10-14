@@ -27,10 +27,11 @@ use clap::Parser;
 use serde::Serialize;
 
 use model::{
-    build_topology, count_false_alarms, simulate, FaultKind, Placement, RunParams, Side, TopoKind,
-    STEP_MS,
+    build_topology, count_false_alarms, simulate, simulate_scenario, FaultKind, Placement,
+    RunParams, ScenarioRunParams, Side, TopoKind, STEP_MS,
 };
 use rca_core::Ranker;
+use scenario::Scenario;
 
 /// Partition lengths in steps (one step is 100 ms), from no partition to about
 /// ten minutes: at least eight non-zero levels as the review requires.
@@ -48,9 +49,12 @@ struct Cli {
     /// Quick smoke run: fewer repetitions, for a fast sanity check.
     #[arg(long)]
     quick: bool,
-    /// Which experiments to run (comma separated: e1,e2,e4,e7,fp). Default: all.
-    #[arg(long, default_value = "e1,e2,e4,e7,fp")]
+    /// Which experiments to run (comma separated: em,e1,e2,e4,e7,fp). Default: all.
+    #[arg(long, default_value = "em,e1,e2,e4,e7,fp")]
     experiments: String,
+    /// Scenario file for the EM multi-edge headline experiment.
+    #[arg(long, default_value = "scenarios/five-edge-100.yaml")]
+    scenario: String,
 }
 
 /// One raw per-run record. Optional columns are empty when they do not apply.
@@ -71,6 +75,35 @@ struct Row {
     seed: u64,
     culprit: String,
     culprit_side: &'static str,
+    diagnosed: bool,
+    ttd_steps: Option<f64>,
+    ttd_ms: Option<f64>,
+    censored: bool,
+    censored_at: Option<f64>,
+    det_latency: Option<f64>,
+    false_alarm: bool,
+    final_rank: i64,
+    cross_bytes: u64,
+}
+
+/// One raw per-run record for the EM multi-edge headline experiment. The device
+/// id and its partition length are carried so the analysis can group the central
+/// placement's time to diagnosis by the cut on each edge device.
+#[derive(Serialize)]
+struct EmRow {
+    experiment: &'static str,
+    scenario: String,
+    placement: &'static str,
+    ranker: &'static str,
+    n_services: usize,
+    n_devices: usize,
+    culprit: String,
+    culprit_side: &'static str,
+    device: String,
+    device_partition_sec: f64,
+    part_offset: i64,
+    loss: f64,
+    seed: u64,
     diagnosed: bool,
     ttd_steps: Option<f64>,
     ttd_ms: Option<f64>,
@@ -287,6 +320,75 @@ fn experiment_e7(base: u64, reps: usize) -> Vec<Row> {
     rows
 }
 
+/// EM: the multi-edge headline placement comparison. Loads a scenario (several
+/// edge devices, each with its own microservices and partition length), runs the
+/// four placements over every culprit and `reps` seeds, paired by seed so the
+/// four placements see the same generated run. The partition start is randomised
+/// relative to the fault (offsets in steps) as the examiner requires, and each
+/// row carries the culprit's device and that device's partition length so the
+/// analysis can plot time to diagnosis against the cut on each edge.
+fn experiment_em(scenario_path: &str, base: u64, reps: usize) -> Result<Vec<EmRow>> {
+    let scenario = Scenario::load(scenario_path)?;
+    let st = scenario.build()?;
+    let n = st.graph.n;
+    let n_dev = st.device_ids.len();
+    let offsets = [-10i64, 0, 10];
+    let mut rows = Vec::new();
+    for culprit in 0..n {
+        for rep in 0..reps {
+            let seed = base + (culprit as u64) * 100_000 + rep as u64;
+            let offset = offsets[(seed % 3) as usize];
+            for placement in Placement::all() {
+                let p = ScenarioRunParams {
+                    placement,
+                    ranker: Ranker::Ppr,
+                    fault: FaultKind::Latency,
+                    part_offset: offset,
+                    loss: 0.0,
+                    sample_every: 1,
+                    latency: 0,
+                    bandwidth: 20,
+                    h: 4.0,
+                    persist: 3,
+                    seed,
+                    culprit: Some(culprit),
+                };
+                let o = simulate_scenario(&st, &p);
+                let device = match o.culprit_device {
+                    Some(d) => st.device_ids[d].clone(),
+                    None => "cloud".to_string(),
+                };
+                let dev_part_sec = o.culprit_partition_steps as f64 * STEP_MS / 1000.0;
+                rows.push(EmRow {
+                    experiment: "em",
+                    scenario: scenario.name.clone(),
+                    placement: placement.as_str(),
+                    ranker: "ppr",
+                    n_services: n,
+                    n_devices: n_dev,
+                    culprit: st.graph.name(o.culprit).to_string(),
+                    culprit_side: if o.culprit_is_cloud { "cloud" } else { "edge" },
+                    device,
+                    device_partition_sec: dev_part_sec,
+                    part_offset: offset,
+                    loss: 0.0,
+                    seed,
+                    diagnosed: o.diagnosed,
+                    ttd_steps: o.diagnosed.then_some(o.ttd),
+                    ttd_ms: o.diagnosed.then_some(o.ttd * STEP_MS),
+                    censored: !o.diagnosed,
+                    censored_at: (!o.diagnosed).then_some(o.censored_at),
+                    det_latency: o.det_latency.is_finite().then_some(o.det_latency),
+                    false_alarm: o.false_alarm,
+                    final_rank: o.final_rank,
+                    cross_bytes: o.cross_bytes,
+                });
+            }
+        }
+    }
+    Ok(rows)
+}
+
 /// False-alarm rate of the detector on fault-free data, h swept 3 to 8.
 #[derive(Serialize)]
 struct FpRow {
@@ -342,12 +444,25 @@ fn main() -> Result<()> {
     let run = |name: &str| want.contains(&name);
 
     // Repetition counts (per cell). Quick mode shrinks them for a smoke test.
-    let (r1, r2, r4, r7, rfp) = if cli.quick {
-        (2, 2, 1, 1, 20)
+    let (rem, r1, r2, r4, r7, rfp) = if cli.quick {
+        (1, 2, 2, 1, 1, 20)
     } else {
-        (10, 8, 3, 4, 300)
+        (6, 10, 8, 3, 4, 300)
     };
 
+    if run("em") {
+        let rows = experiment_em(&cli.scenario, cli.seed, rem)?;
+        let path = format!("{}/raw_em.csv", cli.out_dir);
+        write_rows(&path, &rows)?;
+        println!(
+            "EM multi-edge placement comparison ({}, {} services, {} edges): {} runs -> {}",
+            cli.scenario,
+            rows.first().map(|r| r.n_services).unwrap_or(0),
+            rows.first().map(|r| r.n_devices).unwrap_or(0),
+            rows.len(),
+            path
+        );
+    }
     if run("e1") {
         let rows = experiment_e1(cli.seed, r1);
         let path = format!("{}/raw_e1.csv", cli.out_dir);

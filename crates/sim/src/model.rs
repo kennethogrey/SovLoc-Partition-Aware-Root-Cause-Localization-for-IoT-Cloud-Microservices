@@ -32,6 +32,8 @@ use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use rand_distr::{Distribution, Normal};
 
+use scenario::ScenarioTopology;
+
 pub const STEP_MS: f64 = 100.0; // one simulation step is 100 ms (a diagnostic tick)
 pub const BASELINE_LEN: usize = 40; // pre-fault steps used as the robust baseline
 pub const STABILITY: usize = 3; // consecutive correct top-1 steps to confirm
@@ -726,6 +728,392 @@ fn combine(ea: AnalyzerOut, ca: AnalyzerOut, horizon: usize, fault_at: usize) ->
     }
 }
 
+// ========================= scenario-driven multi-edge =======================
+//
+// The single-edge engine above models one edge site and one cloud back end with
+// a single partition. The headline system under test is instead a *scenario*
+// (`crates/scenario`): several edge devices, each hosting its own microservices
+// and carrying its own partition length, plus a shared cloud back end. This
+// section runs the same four placements over such a topology, generalizing the
+// binary Edge/Cloud split to a per-service home (cloud, or a specific edge
+// device) and the single partition to a per-device cut window. It reuses the
+// metric generator, the detector/ranker (`analyze_view`), and the transport
+// accounting unchanged; only *which link each sample crosses, and when it is
+// cut* is generalized.
+
+/// How one service's telemetry reaches a given collector.
+#[derive(Clone, Copy)]
+enum Transport {
+    /// Co-located with the collector: every sample is available locally.
+    Local,
+    /// Crosses a link that is cut during `[start, end)` (steps). `start == end`
+    /// means the link is never cut (e.g. a device with partition 0).
+    Cross { start: usize, end: usize },
+    /// Not seen by this collector at all (another device's services).
+    Excluded,
+}
+
+/// View the scenario graph as a [`Topo`] so the existing `generate_metrics` and
+/// `analyze_view` apply unchanged. The per-device detail lives in the transport
+/// tables below, not in the coarse `Side`.
+fn scenario_topo(st: &ScenarioTopology) -> Topo {
+    let sides = st
+        .service_device
+        .iter()
+        .map(|d| if d.is_some() { Side::Edge } else { Side::Cloud })
+        .collect();
+    Topo {
+        graph: st.graph.clone(),
+        sides,
+    }
+}
+
+/// Build the (delivery_step, value) events and crossed bytes for one service's
+/// telemetry over a link cut during `[start, end)`. Mirrors the single-edge
+/// `held_view` transport: up links deliver with latency (lossy), a naive policy
+/// drops during the cut, a store-and-forward policy queues and replays on heal,
+/// bandwidth-limited.
+#[allow(clippy::too_many_arguments)]
+fn cross_events(
+    series: &[f64],
+    start: usize,
+    end: usize,
+    policy: Policy,
+    sample_every: usize,
+    latency: usize,
+    bandwidth: usize,
+    horizon: usize,
+    loss: f64,
+    rng: &mut StdRng,
+) -> (Vec<(usize, f64)>, u64) {
+    let up = |e: usize| e < start || e >= end;
+    let mut events = Vec::new();
+    let mut queue: Vec<(usize, f64)> = Vec::new();
+    let mut bytes = 0u64;
+    let mut e = 0usize;
+    while e < horizon {
+        let value = series[e];
+        if up(e) {
+            if loss <= 0.0 || rng.gen::<f64>() >= loss {
+                let dt = (e + latency).min(horizon - 1);
+                events.push((dt, value));
+                bytes += SAMPLE_BYTES;
+            }
+        } else {
+            match policy {
+                Policy::Naive => {}
+                Policy::StoreForward => queue.push((e, value)),
+            }
+        }
+        e += sample_every;
+    }
+    if policy == Policy::StoreForward && !queue.is_empty() {
+        let bw = bandwidth.max(1);
+        for (q, (_orig, value)) in queue.into_iter().enumerate() {
+            let dt = (end + q / bw + latency).min(horizon - 1);
+            events.push((dt, value));
+            bytes += SAMPLE_BYTES;
+        }
+    }
+    (events, bytes)
+}
+
+/// Build a collector's held view over the scenario graph given a per-service
+/// transport. Returns the view, the measured bytes that crossed the boundary,
+/// and which services were ever observed.
+#[allow(clippy::too_many_arguments)]
+fn held_view_scenario(
+    topo: &Topo,
+    metrics: &[Vec<f64>],
+    transport: &[Transport],
+    policy: Policy,
+    sample_every: usize,
+    latency: usize,
+    bandwidth: usize,
+    loss: f64,
+    rng: &mut StdRng,
+) -> (Vec<Vec<f64>>, u64, Vec<bool>) {
+    let n = topo.graph.n;
+    let horizon = metrics[0].len();
+    let mut view = vec![vec![f64::NAN; horizon]; n];
+    let mut observed = vec![false; n];
+    let mut cross_bytes = 0u64;
+
+    for i in 0..n {
+        let (mut events, bytes) = match transport[i] {
+            Transport::Excluded => (Vec::new(), 0u64),
+            Transport::Local => {
+                let mut ev = Vec::new();
+                let mut e = 0usize;
+                while e < horizon {
+                    ev.push((e, metrics[i][e]));
+                    e += sample_every;
+                }
+                (ev, 0u64)
+            }
+            Transport::Cross { start, end } => cross_events(
+                &metrics[i],
+                start,
+                end,
+                policy,
+                sample_every,
+                latency,
+                bandwidth,
+                horizon,
+                loss,
+                rng,
+            ),
+        };
+        cross_bytes += bytes;
+        events.sort_by_key(|(t, _)| *t);
+        let mut last = f64::NAN;
+        let mut k = 0usize;
+        for t in 0..horizon {
+            while k < events.len() && events[k].0 <= t {
+                last = events[k].1;
+                observed[i] = true;
+                k += 1;
+            }
+            view[i][t] = last;
+        }
+    }
+    (view, cross_bytes, observed)
+}
+
+/// Earliest confirmed diagnosis across a set of collectors (the multi-edge
+/// generalization of [`combine`]). If none diagnose, keep a censored record that
+/// carries the earliest detection latency and worst rank seen.
+fn combine_many(outs: Vec<AnalyzerOut>, horizon: usize, fault_at: usize) -> AnalyzerOut {
+    let mut any_false = false;
+    let mut min_det = f64::INFINITY;
+    let mut max_rank = -1i64;
+    for o in &outs {
+        any_false |= o.false_alarm;
+        if o.det_latency.is_finite() {
+            min_det = min_det.min(o.det_latency);
+        }
+        max_rank = max_rank.max(o.final_rank);
+    }
+    let mut best: Option<AnalyzerOut> = None;
+    for o in outs.into_iter().filter(|o| o.diagnosed) {
+        match &best {
+            Some(b) if b.ttd <= o.ttd => {}
+            _ => best = Some(o),
+        }
+    }
+    best.unwrap_or(AnalyzerOut {
+        diagnosed: false,
+        ttd: f64::NAN,
+        censored_at: (horizon - fault_at) as f64,
+        det_latency: if min_det.is_finite() {
+            min_det
+        } else {
+            f64::NAN
+        },
+        false_alarm: any_false,
+        final_rank: max_rank,
+    })
+}
+
+/// Parameters for one scenario run (one placement on one seeded scenario).
+#[derive(Clone, Copy)]
+pub struct ScenarioRunParams {
+    pub placement: Placement,
+    pub ranker: Ranker,
+    pub fault: FaultKind,
+    /// Partition start relative to fault onset (steps); every device's cut starts
+    /// here and lasts its own `partition_time`.
+    pub part_offset: i64,
+    pub loss: f64,
+    pub sample_every: usize,
+    pub latency: usize,
+    pub bandwidth: usize,
+    pub h: f64,
+    pub persist: usize,
+    pub seed: u64,
+    /// Fixed culprit index, or random when None.
+    pub culprit: Option<usize>,
+}
+
+/// The measured outcome of one scenario run.
+pub struct ScenarioRunOutcome {
+    pub culprit: usize,
+    pub culprit_is_cloud: bool,
+    /// Edge-device index of the culprit (into `device_ids`), or None for cloud.
+    pub culprit_device: Option<usize>,
+    /// Partition length of the culprit's device in steps (0 for cloud).
+    pub culprit_partition_steps: usize,
+    pub diagnosed: bool,
+    pub ttd: f64,
+    pub censored_at: f64,
+    pub det_latency: f64,
+    pub false_alarm: bool,
+    pub final_rank: i64,
+    pub cross_bytes: u64,
+}
+
+/// Simulate one run of one placement over a multi-edge scenario and measure the
+/// outcome. Timing mirrors the single-edge `simulate`: a fixed baseline, the
+/// fault, then room after the longest device heals so censoring reflects the
+/// design rather than a truncated window.
+pub fn simulate_scenario(st: &ScenarioTopology, p: &ScenarioRunParams) -> ScenarioRunOutcome {
+    let topo = scenario_topo(st);
+    let n = topo.graph.n;
+    let n_dev = st.device_ids.len();
+    let mut rng = StdRng::seed_from_u64(p.seed);
+    let culprit = p.culprit.unwrap_or_else(|| rng.gen_range(0..n));
+
+    let fault_at = BASELINE_LEN + 20;
+    let part_start = (fault_at as i64 + p.part_offset).max(0) as usize;
+    // The binding partition for this run's censoring window: for an edge culprit
+    // the central collector waits out that device's cut; for a cloud culprit the
+    // edge-local placement waits out the fastest-healing device. The run only
+    // needs to extend past that heal plus room to diagnose, so the horizon tracks
+    // the culprit's own device rather than the longest device in the scenario.
+    let relevant_part = match st.service_device[culprit] {
+        Some(d) => st.partition_steps[d],
+        None => st
+            .partition_steps
+            .iter()
+            .copied()
+            .filter(|&s| s > 0)
+            .min()
+            .unwrap_or(0),
+    };
+    let heal = part_start + relevant_part;
+    let horizon = (heal + relevant_part.max(40) + 60).max(fault_at + 120);
+
+    let metrics = generate_metrics(&topo, culprit, p.fault, fault_at, horizon, p.loss, &mut rng);
+
+    // Absolute cut window end for device `d`.
+    let dev_cross = |d: usize| -> Transport {
+        if st.partition_steps[d] == 0 {
+            Transport::Cross {
+                start: part_start,
+                end: part_start,
+            }
+        } else {
+            Transport::Cross {
+                start: part_start,
+                end: part_start + st.partition_steps[d],
+            }
+        }
+    };
+
+    let (a, bytes) = match p.placement {
+        // One cloud collector. Cloud services are local; each device's services
+        // cross the boundary and are cut for that device's own window.
+        Placement::CentralNaive | Placement::CentralSf => {
+            let policy = if p.placement == Placement::CentralSf {
+                Policy::StoreForward
+            } else {
+                Policy::Naive
+            };
+            let transport: Vec<Transport> = (0..n)
+                .map(|i| match st.service_device[i] {
+                    None => Transport::Local,
+                    Some(d) => dev_cross(d),
+                })
+                .collect();
+            let (view, bytes, observed) = held_view_scenario(
+                &topo,
+                &metrics,
+                &transport,
+                policy,
+                p.sample_every,
+                p.latency,
+                p.bandwidth,
+                p.loss,
+                &mut rng,
+            );
+            let a = analyze_view(
+                &topo, &view, &observed, culprit, fault_at, horizon, p.h, p.persist, p.ranker,
+            );
+            (a, bytes)
+        }
+        // One collector per edge device: its own services local, the small cloud
+        // back end pulled across its own (cut) link, other devices excluded. The
+        // placement diagnoses via whichever device collector confirms first.
+        Placement::EdgeLocal => {
+            let mut outs = Vec::with_capacity(n_dev);
+            let mut total_bytes = 0u64;
+            for d in 0..n_dev {
+                let transport: Vec<Transport> = (0..n)
+                    .map(|i| match st.service_device[i] {
+                        Some(dd) if dd == d => Transport::Local,
+                        None => dev_cross(d),
+                        Some(_) => Transport::Excluded,
+                    })
+                    .collect();
+                let (view, bytes, observed) = held_view_scenario(
+                    &topo,
+                    &metrics,
+                    &transport,
+                    Policy::Naive,
+                    p.sample_every,
+                    p.latency,
+                    p.bandwidth,
+                    p.loss,
+                    &mut rng,
+                );
+                total_bytes += bytes;
+                let a = analyze_view(
+                    &topo, &view, &observed, culprit, fault_at, horizon, p.h, p.persist, p.ranker,
+                );
+                if a.diagnosed {
+                    total_bytes += VERDICT_BYTES; // a compact verdict crosses on diagnosis
+                }
+                outs.push(a);
+            }
+            (combine_many(outs, horizon, fault_at), total_bytes)
+        }
+        // A collector per device plus a cloud collector, each analysing only its
+        // own local services; earliest confirmed diagnosis wins; only compact
+        // verdicts cross. Fast on both edge and cloud faults.
+        Placement::Hybrid => {
+            let mut outs = Vec::with_capacity(n_dev + 1);
+            for d in 0..n_dev {
+                let mask: Vec<bool> = (0..n).map(|i| st.service_device[i] == Some(d)).collect();
+                let view = local_view(&metrics, &mask);
+                let a = analyze_view(
+                    &topo, &view, &mask, culprit, fault_at, horizon, p.h, p.persist, p.ranker,
+                );
+                outs.push(a);
+            }
+            let cloud_mask: Vec<bool> = (0..n).map(|i| st.service_device[i].is_none()).collect();
+            let cview = local_view(&metrics, &cloud_mask);
+            outs.push(analyze_view(
+                &topo,
+                &cview,
+                &cloud_mask,
+                culprit,
+                fault_at,
+                horizon,
+                p.h,
+                p.persist,
+                p.ranker,
+            ));
+            let bytes = VERDICT_BYTES * (n_dev as u64 + 1); // one verdict per collector
+            (combine_many(outs, horizon, fault_at), bytes)
+        }
+    };
+
+    let culprit_device = st.service_device[culprit];
+    ScenarioRunOutcome {
+        culprit,
+        culprit_is_cloud: culprit_device.is_none(),
+        culprit_device,
+        culprit_partition_steps: culprit_device.map(|d| st.partition_steps[d]).unwrap_or(0),
+        diagnosed: a.diagnosed,
+        ttd: a.ttd,
+        censored_at: a.censored_at,
+        det_latency: a.det_latency,
+        false_alarm: a.false_alarm,
+        final_rank: a.final_rank,
+        cross_bytes: bytes,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -802,5 +1190,137 @@ mod tests {
         let sf = simulate(&base_params(Placement::CentralSf, 200, 2));
         let edge = simulate(&base_params(Placement::EdgeLocal, 200, 2));
         assert!(sf.cross_bytes > edge.cross_bytes);
+    }
+}
+
+#[cfg(test)]
+mod scenario_model_tests {
+    use super::*;
+    use scenario::Scenario;
+
+    fn build(yaml: &str) -> ScenarioTopology {
+        Scenario::from_yaml_str(yaml)
+            .expect("scenario parses")
+            .build()
+            .expect("scenario builds")
+    }
+
+    fn sp(placement: Placement, culprit: usize) -> ScenarioRunParams {
+        ScenarioRunParams {
+            placement,
+            ranker: Ranker::Ppr,
+            fault: FaultKind::Latency,
+            part_offset: 0,
+            loss: 0.0,
+            sample_every: 1,
+            latency: 0,
+            bandwidth: 20,
+            h: 4.0,
+            persist: 3,
+            seed: 7,
+            culprit: Some(culprit),
+        }
+    }
+
+    // Three edge devices, uneven sizes, no partition anywhere.
+    const NO_CUT: &str = r#"
+name: t0
+cloud_services: [enrich, store, alerting]
+edge_devices:
+  - { id: e1, service_count: 10, partition_time: 0 }
+  - { id: e2, service_count: 8,  partition_time: 0 }
+  - { id: e3, service_count: 12, partition_time: 0 }
+"#;
+
+    // e2 carries a long partition; e1/e3 none.
+    const LONG_CUT_E2: &str = r#"
+name: t1
+cloud_services: [enrich, store, alerting]
+edge_devices:
+  - { id: e1, service_count: 10, partition_time: 0 }
+  - { id: e2, service_count: 8,  partition_time: 50 }
+  - { id: e3, service_count: 12, partition_time: 0 }
+"#;
+
+    #[test]
+    fn no_partition_all_placements_diagnose_edge_fault() {
+        let st = build(NO_CUT);
+        // index 0 is e1's first service, an edge-side service.
+        for p in Placement::all() {
+            let o = simulate_scenario(&st, &sp(p, 0));
+            assert!(
+                o.diagnosed,
+                "{} should diagnose an edge fault with no partition",
+                p.as_str()
+            );
+            assert!(!o.culprit_is_cloud);
+            assert_eq!(o.culprit_device, Some(0));
+        }
+    }
+
+    #[test]
+    fn long_partition_censors_central_not_edge_local() {
+        let st = build(LONG_CUT_E2);
+        // Culprit on e2 (its first service): e2 starts after e1's 10 services.
+        let culprit = 10;
+        let central = simulate_scenario(&st, &sp(Placement::CentralNaive, culprit));
+        let edge = simulate_scenario(&st, &sp(Placement::EdgeLocal, culprit));
+        assert_eq!(edge.culprit_device, Some(1), "culprit is on e2");
+        assert!(
+            edge.diagnosed,
+            "edge-local sees its own device, so it localizes the edge fault"
+        );
+        // The cloud collector loses e2 for the whole long cut; it is slower or
+        // censored. This now EMERGES from the per-device transport, not a mask.
+        if central.diagnosed {
+            assert!(
+                central.ttd >= edge.ttd,
+                "central ttd {} should be >= edge-local ttd {}",
+                central.ttd,
+                edge.ttd
+            );
+        }
+    }
+
+    #[test]
+    fn bytes_rank_central_sf_above_edge_local_above_hybrid() {
+        let st = build(LONG_CUT_E2);
+        let naive = simulate_scenario(&st, &sp(Placement::CentralNaive, 0));
+        let sf = simulate_scenario(&st, &sp(Placement::CentralSf, 0));
+        let el = simulate_scenario(&st, &sp(Placement::EdgeLocal, 0));
+        let hy = simulate_scenario(&st, &sp(Placement::Hybrid, 0));
+        // Store-and-forward replays the buffered cut samples, so it crosses at
+        // least as much as the naive cloud collector.
+        assert!(sf.cross_bytes >= naive.cross_bytes);
+        // The cloud collector pulls every edge service across; edge-local pulls
+        // only the small cloud back end; hybrid ships compact verdicts only.
+        assert!(
+            sf.cross_bytes > el.cross_bytes,
+            "sf {} > el {}",
+            sf.cross_bytes,
+            el.cross_bytes
+        );
+        assert!(
+            el.cross_bytes > hy.cross_bytes,
+            "el {} > hy {}",
+            el.cross_bytes,
+            hy.cross_bytes
+        );
+    }
+
+    #[test]
+    fn cloud_fault_is_caught_by_the_cloud_side() {
+        let st = build(LONG_CUT_E2);
+        // First cloud service sits right after the 30 edge services.
+        let cloud_culprit = 30;
+        let o = simulate_scenario(&st, &sp(Placement::Hybrid, cloud_culprit));
+        assert!(o.culprit_is_cloud, "index 30 is a cloud service");
+        assert!(
+            o.diagnosed,
+            "hybrid's cloud collector localizes a cloud fault even while edges are cut"
+        );
+        // The cloud collector sees the cloud locally, so central also catches it.
+        let c = simulate_scenario(&st, &sp(Placement::CentralNaive, cloud_culprit));
+        assert!(c.diagnosed);
     }
 }
