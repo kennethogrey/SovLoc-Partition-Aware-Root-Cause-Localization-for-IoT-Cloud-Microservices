@@ -51,7 +51,84 @@ and toolchain.
 
 ---
 
+## C0. Multi-edge production: the full 5-edge mesh (real per-device cut)
+
+This is the headline production tier: the whole `scenarios/five-edge-100.yaml`
+topology (5 edge devices, ~20 microservices each, a distinct partition per device,
+103 services + 5 edge collectors + a cloud collector) deployed for real, where a
+partition is a genuine **network cut of one device from the cloud**, not an
+in-process toggle. Each event injects a random culprit, cuts that culprit's device
+for its partition length, and records one row: the device's edge collector
+localizes its own fault during the cut, while the cloud collector loses exactly
+that device's services and cannot localize the edge fault until the link heals.
+Output schema matches the EM simulation, so `scripts/e6/compare_prod.sh` compares
+both.
+
+Build the mesh first: `cargo build --release -p mesh`.
+
+### C0.1 single-node (Docker, the whole mesh on one host)
+
+The lightest full-mesh tier: ~109 containers on one host, cut with
+`docker network disconnect`. Validate on the tiny scenario first (15 containers,
+seconds to come up), then run the real one.
+
+```bash
+# smoke test (tiny), proves the harness end to end
+SCENARIO=scenarios/three-edge-tiny.yaml PLATFORM=single-node-mesh-tiny EVENTS=3 \
+  scripts/e6/run_events_mesh.sh
+
+# the real multi-edge run (>= 30 events); first run builds the image (~3 min)
+SCENARIO=scenarios/five-edge-100.yaml PLATFORM=single-node-mesh EVENTS=30 \
+  scripts/e6/run_events_mesh.sh
+scripts/e6/compare_prod.sh results/production/single-node-mesh.csv
+```
+
+Each row shows `edge_localized`, `edge_ttd_ms`, `cloud_localized_during_cut` (0 for
+an edge fault during its cut), and `cloud_min_visible` (drops by exactly the cut
+device's size). `KEEP_UP=1` leaves the mesh running between runs.
+
+### C0.2 k3s / OpenStack-k8s / Crane Cloud (the full mesh on a cluster)
+
+`mesh gen-k8s` writes a Deployment+Service per microservice, one edge collector per
+device, a cloud collector, a control pod, and a per-device cut NetworkPolicy. A
+real partition is `kubectl apply -f cuts/cut-<id>.yaml` (restricts that device's
+egress to its own pods plus DNS, blocking the cloud); healing is `kubectl delete`.
+k3s enforces NetworkPolicy by default; on another cluster confirm a policy-enforcing
+CNI (Calico / Cilium). The cluster needs room for ~110 pods — scale the node pool,
+or use a smaller scenario and say so (disclosed, not hidden).
+
+Get the image into the cluster, then run:
+
+```bash
+# build once
+docker build -t sovloc-mesh:local .
+
+# --- k3s (local image; containerd needs the image imported, which needs sudo) ---
+docker save sovloc-mesh:local | sudo k3s ctr images import -
+SCENARIO=scenarios/five-edge-100.yaml NAMESPACE=sovloc PLATFORM=k3s EVENTS=30 \
+  K8S_IMAGE=sovloc-mesh:local IMAGE_PULL_POLICY=Never \
+  scripts/e6/run_events_k8s.sh
+scripts/e6/compare_prod.sh results/production/k3s.csv
+
+# --- OpenStack k8s / Crane Cloud (push to a registry the cluster can pull) ---
+DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v6   # tags/pushes
+SCENARIO=scenarios/five-edge-100.yaml NAMESPACE=sovloc PLATFORM=openstack EVENTS=30 \
+  K8S_IMAGE=<dockerhub-user>/sovloc-mesh:v6 scripts/e6/run_events_k8s.sh
+scripts/e6/compare_prod.sh results/production/openstack.csv
+```
+
+The harness deploys `mesh.yaml`, injects and polls `/status` through the control
+pod (`kubectl exec deploy/sovloc-control -- mesh status --url ...`), and tears the
+mesh down at the end (`KEEP_UP=1` keeps it). Point `KUBECTL`/kubeconfig at the
+target cluster for the OpenStack and Crane tiers.
+
+---
+
 ## C. Produce the E6 production results (>= 30 events per platform)
+
+> Lighter alternative to C0: the original 7-service cloud-half tier. Use it when a
+> platform cannot host the full ~110-pod multi-edge mesh, or as a cross-check. C0
+> is the headline multi-edge production.
 
 Model used on every remote tier: the **cloud half** (cloud collector + enrich,
 store, alerting) runs on the platform, genuinely remote; the **edge half** (the four

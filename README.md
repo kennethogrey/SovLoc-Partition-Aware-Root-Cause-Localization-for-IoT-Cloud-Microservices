@@ -97,7 +97,19 @@ that matches the manuscript is the annotated tag `v2.0-revision`.
 The simulation is one tier. The production tier runs the same edge and cloud
 service split on real infrastructure, so the cloud side is genuinely remote from
 the edge side and a partition is a real network cut rather than an in process
-toggle. The cloud half (the cloud collector plus enrich, store, and alerting) runs
+toggle.
+
+The headline production tier is the **full multi-edge mesh**: `mesh gen-compose`
+(Docker) and `mesh gen-k8s` (Kubernetes) stand up the whole
+`scenarios/five-edge-100.yaml` topology (103 services, 5 edge collectors, a cloud
+collector), and a partition is a real per-device network cut, `docker network
+disconnect` for a device's net on Docker or a per-device `NetworkPolicy` on a
+cluster. `scripts/e6/run_events_mesh.sh` (Docker) and `scripts/e6/run_events_k8s.sh`
+(k3s / OpenStack / Crane Cloud) run at least thirty events and record one row per
+event; during each edge-device cut the edge collector keeps localizing that
+device's fault while the cloud collector loses exactly that device's services.
+`RUNBOOK.md` section C0 has the step by step. The lighter 7-service cloud-half tier
+below remains as a cross-check for platforms that cannot host the full mesh. The cloud half (the cloud collector plus enrich, store, and alerting) runs
 on the platform; the edge half (the four edge services plus the edge collector) is
 driven by the harness; and the cut severs the edge to cloud link. During the cut
 the cloud collector still sees its three local cloud services, so "cloud sees 0 of
@@ -123,7 +135,7 @@ scripts/e6/compare_prod.sh results/production/single-node.csv
 | `crates/sim` | the deterministic seeded simulation (`sim`) and the analysis binary (`analysis`) that turns the raw CSVs into tables, statistics, `numbers.tex`, and the figure |
 | `crates/mesh` | the real networked mesh: real services and two live collectors over TCP and HTTP, the production tier |
 | `crates/scenario` | reads a YAML topology (many edge devices, each with its own microservice count and partition time) that drives both the multi-edge simulation headline (`scenarios/five-edge-100.yaml`) and the configurable production mesh |
-| `scripts/e6/` | the E6 production harness: `run_events.sh`, `calibrate.sh` (E3), `compare_prod.sh`, and the per platform cut scripts |
+| `scripts/e6/` | the E6 production harness: `run_events_mesh.sh` (full multi-edge mesh on Docker), `run_events_k8s.sh` (multi-edge on a cluster), `run_events.sh` (7-service cloud-half tier), `calibrate.sh` (E3), `compare_prod.sh`, and the per platform cut scripts |
 | `scripts/cranecloud/` | the CRANE Cloud real Internet tier: build and push, deploy, probe, and partition the link |
 | `deploy/k3s/`, `deploy/openstack/` | the cloud half manifests and runbooks for the cluster tiers |
 | `Dockerfile`, `docker/` | the pinned reproduction and runtime images |

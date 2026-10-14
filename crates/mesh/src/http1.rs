@@ -179,6 +179,48 @@ pub fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
     Some((host, port, base.to_string()))
 }
 
+/// GET a plain `http://host[:port]/path` URL and return the response body as a
+/// String. Used by `mesh status` so the E6 cluster harness can read a collector's
+/// `/status` from inside the cluster (via `kubectl exec`) without a curl or wget
+/// in the runtime image.
+pub async fn get_text(url: &str) -> std::io::Result<String> {
+    let (host, port, path) = parse_http_url(url).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("expected an http:// url, got: {url}"),
+        )
+    })?;
+    let mut stream = TcpStream::connect((host.as_str(), port)).await?;
+    let req = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).await?;
+    stream.flush().await?;
+
+    let mut reader = BufReader::new(&mut stream);
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line).await?;
+    let mut content_length = 0usize;
+    loop {
+        let mut h = String::new();
+        if reader.read_line(&mut h).await? == 0 {
+            break;
+        }
+        let t = h.trim_end();
+        if t.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = t.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 {
+        reader.read_exact(&mut body).await?;
+    }
+    Ok(String::from_utf8_lossy(&body).to_string())
+}
+
 /// POST a JSON body to `<base_url><path>` over plain HTTP/1.1, best effort.
 /// One connection per call (`Connection: close`), which matches the low SovLoc
 /// report rate and keeps the client stateless behind the platform ingress.
