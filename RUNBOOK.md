@@ -94,26 +94,46 @@ device, a cloud collector, a control pod, and a per-device cut NetworkPolicy. A
 real partition is `kubectl apply -f cuts/cut-<id>.yaml` (restricts that device's
 egress to its own pods plus DNS, blocking the cloud); healing is `kubectl delete`.
 k3s enforces NetworkPolicy by default; on another cluster confirm a policy-enforcing
-CNI (Calico / Cilium). The cluster needs room for ~110 pods — scale the node pool,
-or use a smaller scenario and say so (disclosed, not hidden).
+CNI (Calico / Cilium).
+
+Two cluster facts the harness depends on, both learned the hard way:
+
+- **Pod budget.** The full mesh is ~110 pods. A kubelet defaults to `max-pods=110`,
+  and system pods already use ~11, so the mesh overflows and the extra pods stay
+  `Pending`. Raise the cap (k3s: add `kubelet-arg: ["max-pods=150"]` to
+  `/etc/rancher/k3s/config.yaml` and `sudo systemctl restart k3s`; verify with
+  `kubectl get node <n> -o jsonpath='{.status.capacity.pods}'`), use a multi-node
+  pool, or run a smaller scenario and say so (disclosed, not hidden).
+- **A NetworkPolicy only blocks NEW connections.** The mesh service holds one
+  persistent telemetry stream, so an egress cut alone would ride the established
+  socket and the cloud would never go blind. `gen-k8s` therefore starts every
+  service with `--conn-recycle-ms 1000`, so the service reopens its cloud socket
+  each second and the reopen fails during the cut. The Docker tier needs none of
+  this (its `network disconnect` severs the socket directly), and keeps the default
+  `--conn-recycle-ms 0`.
+
+The harness now also **self-tests the data path before writing any rows** (it probes
+`cloud` and one edge `/status` through the control pod and aborts, writing no CSV, if
+they do not answer) and **tears down the workloads but keeps the namespace** (deleting
+the namespace can hang for minutes when a cluster add-on's aggregated API is
+unhealthy, e.g. a crash-looping metrics-server stalls `metrics.k8s.io` discovery and
+the namespace garbage-collector with it).
 
 Get the image into the cluster, then run:
 
 ```bash
-# build once
-docker build -t sovloc-mesh:local .
+# build + push once (the clusters pull it; v8 carries the connection-recycle fix)
+DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v8
 
-# --- k3s (local image; containerd needs the image imported, which needs sudo) ---
-docker save sovloc-mesh:local | sudo k3s ctr images import -
+# --- k3s (pull from the registry; no sudo image import needed) ---
 SCENARIO=scenarios/five-edge-100.yaml NAMESPACE=sovloc PLATFORM=k3s EVENTS=30 \
-  K8S_IMAGE=sovloc-mesh:local IMAGE_PULL_POLICY=Never \
+  K8S_IMAGE=<dockerhub-user>/sovloc-mesh:v8 IMAGE_PULL_POLICY=IfNotPresent \
   scripts/e6/run_events_k8s.sh
 scripts/e6/compare_prod.sh results/production/k3s.csv
 
-# --- OpenStack k8s / Crane Cloud (push to a registry the cluster can pull) ---
-DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v6   # tags/pushes
+# --- OpenStack k8s / Crane Cloud (same command, point kubeconfig at the cluster) ---
 SCENARIO=scenarios/five-edge-100.yaml NAMESPACE=sovloc PLATFORM=openstack EVENTS=30 \
-  K8S_IMAGE=<dockerhub-user>/sovloc-mesh:v6 scripts/e6/run_events_k8s.sh
+  K8S_IMAGE=<dockerhub-user>/sovloc-mesh:v8 scripts/e6/run_events_k8s.sh
 scripts/e6/compare_prod.sh results/production/openstack.csv
 ```
 

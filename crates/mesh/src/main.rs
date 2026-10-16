@@ -262,6 +262,17 @@ struct ServiceArgs {
     /// Report period in ms.
     #[arg(long, default_value_t = 200)]
     period_ms: u64,
+    /// Reopen the CLOUD telemetry connection at least this often (ms). A real
+    /// network partition such as a k8s NetworkPolicy only blocks NEW connections,
+    /// so an already-established stream would keep the cloud fed and never go
+    /// blind; recycling the socket makes the cut take effect within this window
+    /// plus the collector staleness window. 0 (the default) keeps one persistent
+    /// connection, which is correct wherever the cut severs the socket itself
+    /// (the Docker tier's network disconnect); the k8s tier sets this to 1000 via
+    /// `gen-k8s` because a NetworkPolicy only blocks new connections. The edge
+    /// link is same-device and never recycled.
+    #[arg(long, default_value_t = 0)]
+    conn_recycle_ms: u64,
     /// RNG seed.
     #[arg(long, default_value_t = 7)]
     seed: u64,
@@ -829,6 +840,7 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
     let mut rng = rand::rngs::StdRng::seed_from_u64(a.seed ^ name_hash);
 
     let mut cloud_conn: Option<TcpStream> = None;
+    let mut cloud_conn_since: u128 = 0;
     let mut edge_conn: Option<TcpStream> = None;
     let mut ticker = tokio::time::interval(Duration::from_millis(a.period_ms));
 
@@ -885,7 +897,22 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
 
         if let Some(addr) = &a.cloud {
             if !cloud_dropped {
+                // Recycle the cloud socket so a real partition (which only blocks
+                // NEW connections, e.g. a k8s NetworkPolicy) actually cuts the
+                // stream instead of riding an already-established one. Reopening
+                // while partitioned fails, so the cloud stops hearing this service
+                // and goes stale, i.e. blind, exactly as a disconnect would.
+                if a.conn_recycle_ms > 0
+                    && cloud_conn.is_some()
+                    && now.saturating_sub(cloud_conn_since) >= a.conn_recycle_ms as u128
+                {
+                    cloud_conn = None;
+                }
+                let was_connected = cloud_conn.is_some();
                 send_line(addr, &mut cloud_conn, &line).await;
+                if !was_connected && cloud_conn.is_some() {
+                    cloud_conn_since = now;
+                }
             }
         }
         // Wide-area cloud link (Crane Cloud): hand the sample to the streaming
@@ -1443,6 +1470,12 @@ fn run_gen_k8s(a: GenK8sArgs) -> Result<()> {
             "none".into(),
             "--cloud".into(),
             format!("cloud:{}", a.cloud_port),
+            // A k8s NetworkPolicy partition only blocks NEW connections, so the
+            // service must recycle its cloud socket for the cut to take effect.
+            // The Docker tier severs the socket directly (network disconnect) and
+            // leaves this at the default 0, avoiding reconnect churn on one host.
+            "--conn-recycle-ms".into(),
+            "1000".into(),
         ];
         match topo.service_device[i] {
             Some(d) => {

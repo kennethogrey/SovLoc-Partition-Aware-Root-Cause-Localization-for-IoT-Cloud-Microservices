@@ -27,7 +27,8 @@ K8S_DIR="${K8S_DIR:-deploy/k8s/generated}"
 K8S_IMAGE="${K8S_IMAGE:-sovloc-mesh:local}"
 PULL="${IMAGE_PULL_POLICY:-IfNotPresent}"
 EVENTS="${EVENTS:-30}"
-BASELINE_WAIT="${BASELINE_WAIT:-12}"
+BASELINE_WAIT="${BASELINE_WAIT:-30}"
+WAIT_TIMEOUT="${WAIT_TIMEOUT:-300s}"
 OBSERVE_AFTER="${OBSERVE_AFTER:-8}"
 SETTLE="${SETTLE:-3}"
 SEED="${SEED:-42}"; RANDOM=$SEED
@@ -59,16 +60,32 @@ echo "==> generating manifests ($K8S_DIR) and deploying to namespace $NS" >&2
 
 cleanup() {
   if [ "$KEEP_UP" = "1" ]; then
-    echo "KEEP_UP=1: leaving the mesh deployed. Tear down with: kubectl delete -f $K8S_DIR/mesh.yaml" >&2
+    echo "KEEP_UP=1: leaving the mesh deployed. Tear down with: kubectl -n $NS delete deploy,svc,networkpolicy,configmap --all" >&2
   else
-    "$KUBECTL" delete -f "$K8S_DIR/mesh.yaml" >/dev/null 2>&1 || true
+    # Delete the workloads but KEEP the namespace. Deleting the namespace can hang
+    # for minutes (or forever) when a cluster add-on's aggregated API is unhealthy
+    # (e.g. a crash-looping metrics-server makes metrics.k8s.io discovery stale, so
+    # the namespace garbage-collector stalls). Tearing down the resources directly
+    # is instant and lets the next run re-apply into the same namespace.
+    kx delete deploy,svc,networkpolicy,configmap --all --ignore-not-found >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
 
-echo "==> waiting for deployments to become available (up to 180s)" >&2
-kx wait --for=condition=available --timeout=180s deployment --all >/dev/null 2>&1 || \
-  echo "  (some deployments not ready yet; continuing)" >&2
+echo "==> waiting for deployments to become available (up to $WAIT_TIMEOUT)" >&2
+kx wait --for=condition=available --timeout="$WAIT_TIMEOUT" deployment --all >/dev/null 2>&1 || true
+# Preflight: refuse to run (and write NO CSV) if any deployment is not available.
+# A partial deployment (e.g. pods that never scheduled because of the node pod budget)
+# is why an earlier run silently recorded 30 NA rows that looked like a finished result.
+notready="$(kx get deploy -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.availableReplicas}{"/"}{.spec.replicas}{"\n"}{end}' 2>/dev/null \
+  | awk '{n=split($2,a,"/"); if(n<2 || a[1]+0 < a[2]+0) print "    " $1 " available=" $2}')"
+if [ -n "$notready" ]; then
+  echo "ABORT: not all deployments are available after $WAIT_TIMEOUT. No results written." >&2
+  echo "$notready" >&2
+  echo "  Pending pods (often pod-budget or image-pull):" >&2
+  kx get pods --field-selector=status.phase=Pending --no-headers 2>/dev/null | awk '{print "    " $1 "  " $3}' | head >&2
+  exit 1
+fi
 
 # 2) Scenario map.
 declare -A DEV_OF PSEC_OF SIDE_OF DEV_HTTP
@@ -83,6 +100,30 @@ done < <("$BIN" describe --scenario "$SCENARIO")
 N_SVC=${#SERVICES[@]}
 echo "==> ${N_SVC} services across ${#DEVICES[@]} edge devices; waiting ${BASELINE_WAIT}s for baselines" >&2
 sleep "$BASELINE_WAIT"
+
+# Self-test the data path before writing any rows: a broken control pod / service
+# DNS / status endpoint aborts loudly instead of logging NA. Retry a few times so a
+# transient DNS or endpoint-registration hiccup on a freshly deployed cluster does
+# not kill the run; only a persistent failure aborts.
+probe_status() { # $1=host $2=port -> prints the JSON body on success, nonzero after retries
+  local host="$1" port="$2" tries="${SELFTEST_TRIES:-8}" body="" t
+  for ((t=1; t<=tries; t++)); do
+    body="$(kx exec deploy/sovloc-control -- mesh status --url "http://${host}:${port}/status" 2>/dev/null)" || body=""
+    if printf '%s' "$body" | grep -qE '"visible":[0-9]+'; then printf '%s' "$body"; return 0; fi
+    sleep 3
+  done
+  printf '%s' "$body"; return 1
+}
+echo "==> self-test: probing cloud and edge /status via sovloc-control (up to ${SELFTEST_TRIES:-8} tries)" >&2
+cp="$(probe_status cloud "$CLOUD_HTTP")" || {
+  echo "ABORT: cloud /status never returned a numeric visible field; last: ${cp:-<empty>}" >&2; exit 1; }
+echo "  cloud: $cp" >&2
+if [ "${#DEVICES[@]}" -gt 0 ]; then
+  sd="${DEVICES[0]}"; sp="${DEV_HTTP[$sd]}"
+  ep="$(probe_status "$sd" "$sp")" || {
+    echo "ABORT: edge $sd /status never returned a numeric visible field; last: ${ep:-<empty>}" >&2; exit 1; }
+  echo "  $sd: $ep" >&2
+fi
 
 OUT="results/production/${PLATFORM}.csv"
 mkdir -p results/production
