@@ -231,12 +231,21 @@ CRANE has no exec path, so the route cut also blinds a poll from the harness: re
 the cloud's 3/7 during the cut from the Crane app logs (Application logs in the
 console) and note it; the harness captures the edge side authoritatively.
 
-### C.5 optional: measure bytes on the wire
+### C.5 measured footprint (bytes, CPU, RSS, P99, energy)
 
-Add `MEASURE_BYTES=1` (needs root/iptables on the edge host) to record the telemetry
-bytes crossing to the cloud per event; `compare_prod.sh` then adds the +/-20% bytes
-check. Where the edge host cannot see the counter, leave it off and bytes stay NA
-(disclosed, not inferred).
+The cloud collector counts the real telemetry bytes it receives, times each ingest
+handler, and reads its own resident memory and CPU, all exposed on `GET /status`
+(`bytes_in`, `p99_handler_us`, `rss_kb`, `cpu_ms`). `run_events_mesh.sh` records a
+`cross_bytes`, `cpu_ms`, `rss_kb` and `p99_handler_us` column per event with no root
+or iptables, and `compare_prod.sh` prints the measured footprint block. The sim's
+per-sample byte constant is itself measured from the same JSON record (a test in
+`crates/sim/src/model.rs` checks it), so bytes are a measurement on both sides.
+
+Energy is separate because reading Intel RAPL needs privilege:
+
+```bash
+make energy        # sudo; writes results/analysis/energy.txt (joules per diagnosis)
+```
 
 ---
 
@@ -258,11 +267,34 @@ scope the claim rather than hiding it (the examiner's rule).
 
 ---
 
+## E. External dataset validation (the detector on independent data)
+
+To answer "the simulator embodies the detector's assumptions", run the SAME detector
+and the SAME four rankers on an external benchmark with labelled root causes. The
+`rca_bench` binary targets the RCAEval datasets (arXiv 2412.17015):
+
+```bash
+make bench DIR=<dataset-root>          # METRIC=latency by default
+# or: ./target/release/rca_bench --dir <dataset-root> --metric latency \
+#       --out results/analysis/summary_ext.csv
+```
+
+Each case subdirectory needs a `metrics.csv` (a header row, then numeric rows; a
+leading `time` column is ignored; columns `<service>_<metric>` collapse to one series
+per service), an optional `graph.csv` (`caller,callee[,weight]` for the call graph the
+graph rankers walk), and the root-cause service name in `label.txt`. Download RCAEval's
+data with its own tooling (`pip install RCAEval` then its `download_data`), and point
+`--dir` at the extracted cases, converting column names to the `<service>_<metric>`
+form if needed. The output `summary_ext.csv` reports top-1 and top-3 per ranker, so PPR
+is scored against argmax, BARO and the random-walk baseline on real data.
+
+---
+
 ## Honest limits (documented, not fabricated)
 
 - Cloud-side faults on the remote tiers need remote injection; the harness injects
   edge-side faults there (the symmetric cloud-fault cost is shown in the simulation,
   E1). Single-node faults any of the seven.
-- Second-coder Cohen's kappa (E9), Raspberry-Pi energy (E4, no power meter), and an
-  uncontrolled rural/mobile link (E8) are not run here; each has a protocol and stays
-  an honest limitation.
+- Energy is measured on this x86 host via Intel RAPL (`make energy`); a Raspberry-Pi
+  power-meter run (E4) and an uncontrolled rural/mobile link (E8) remain documented
+  protocols. Second-coder Cohen's kappa (E9) stays an honest limitation.
