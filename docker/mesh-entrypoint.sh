@@ -29,14 +29,21 @@ HTTP_PORT="${PORT:-${HTTP_PORT:-8080}}"
 # with SOVLOC_ROLE=cloud-half.
 if [ "${1:-}" = "cloud-half" ] || [ "${SOVLOC_ROLE:-}" = "cloud-half" ]; then
   C="http://127.0.0.1:$HTTP_PORT"
-  mesh service --name enrich   --culprit none --control-port 9114 --period-ms "${PERIOD_MS:-200}" --http-cloud "$C" &
-  mesh service --name store    --culprit none --control-port 9115 --period-ms "${PERIOD_MS:-200}" --http-cloud "$C" &
-  mesh service --name alerting --culprit none --control-port 9116 --period-ms "${PERIOD_MS:-200}" --http-cloud "$C" &
+  # Optional scenario: with SOVLOC_SCENARIO the cloud collector builds the full
+  # multi-edge call graph (e.g. the 103-service five-edge-100 topology baked into
+  # /app/scenarios) so this tier matches the single-node, k3s and OpenStack tiers,
+  # and the three cloud services are resolved from it. Unset = the built-in seven.
+  SCEN=""
+  [ -n "${SOVLOC_SCENARIO:-}" ] && SCEN="--scenario ${SOVLOC_SCENARIO}"
+  mesh service --name enrich   --culprit none --control-port 9114 --period-ms "${PERIOD_MS:-200}" $SCEN --http-cloud "$C" &
+  mesh service --name store    --culprit none --control-port 9115 --period-ms "${PERIOD_MS:-200}" $SCEN --http-cloud "$C" &
+  mesh service --name alerting --culprit none --control-port 9116 --period-ms "${PERIOD_MS:-200}" $SCEN --http-cloud "$C" &
   exec mesh collector \
     --name "${SOVLOC_NAME:-cloud}" \
     --http-port "$HTTP_PORT" \
     --port "${SOVLOC_TCP_PORT:-7000}" \
     --control-port 9200 \
+    $SCEN \
     --stale-ms "${SOVLOC_STALE_MS:-3000}"
 fi
 
