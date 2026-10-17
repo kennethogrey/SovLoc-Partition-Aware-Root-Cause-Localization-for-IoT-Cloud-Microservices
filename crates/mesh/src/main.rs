@@ -725,7 +725,11 @@ fn spawn_http_ingress(ctx: Arc<Ctx>, port: u16) {
                 // closes it, so a streaming sender reuses one connection.
                 while let Some(req) = http1::read_request(&mut stream).await {
                     match (req.method.as_str(), req.path.as_str()) {
-                        ("GET", "/healthz") | ("GET", "/") => {
+                        // Health endpoints answer ANY method (GET, HEAD, ...) so a
+                        // managed platform's readiness/liveness probe passes however
+                        // it is phrased; otherwise the ingress marks the app
+                        // unhealthy and returns "no available server" (503).
+                        (_, "/healthz") | (_, "/") => {
                             http1::write_response(&mut stream, "200 OK", "ok\n").await;
                         }
                         ("GET", "/status") => {
