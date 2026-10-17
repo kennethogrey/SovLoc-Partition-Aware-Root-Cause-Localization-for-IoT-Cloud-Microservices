@@ -1512,8 +1512,17 @@ fn run_gen_k8s(a: GenK8sArgs) -> Result<()> {
             // service must recycle its cloud socket for the cut to take effect.
             // The Docker tier severs the socket directly (network disconnect) and
             // leaves this at the default 0, avoiding reconnect churn on one host.
+            // This must beat the fault lead: the harness applies the cut, then
+            // injects the fault LEAD_MS later (1500 ms), so every pre-cut stream
+            // (age up to this value, plus one report interval) must be recycled and
+            // re-blocked before the fault is visible, or a post-fault sample would
+            // ride the old stream to the cloud and the cloud would not go blind.
+            // 1200 ms + a 200 ms report interval = 1400 ms < 1500 ms closes that
+            // window on every event, while staying loose enough to keep the
+            // reconnect rate (and its scheduling cost) near the single persistent
+            // connection, so the edge diagnosis time is unaffected.
             "--conn-recycle-ms".into(),
-            "1000".into(),
+            "1200".into(),
         ];
         match topo.service_device[i] {
             Some(d) => {

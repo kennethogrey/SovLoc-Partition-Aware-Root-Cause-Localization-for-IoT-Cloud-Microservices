@@ -35,7 +35,11 @@ SEED="${SEED:-42}"; RANDOM=$SEED
 CLOUD_HTTP="${CLOUD_HTTP:-8080}"
 EDGE_HTTP_BASE="${EDGE_HTTP_BASE:-8081}"
 MOUNT="${MOUNT:-/etc/sovloc/scenario.yaml}"
-LEAD_MS="${LEAD_MS:-500}"
+# Inject the fault this long after the cut is applied. It must exceed the service
+# cloud-socket recycle window (gen-k8s sets 1200 ms) plus one report interval, so a
+# NetworkPolicy cut has re-blocked every pre-cut stream before the fault is visible
+# and the cloud goes blind on every event.
+LEAD_MS="${LEAD_MS:-1500}"
 KUBECTL="${KUBECTL:-kubectl}"
 KEEP_UP="${KEEP_UP:-0}"
 
