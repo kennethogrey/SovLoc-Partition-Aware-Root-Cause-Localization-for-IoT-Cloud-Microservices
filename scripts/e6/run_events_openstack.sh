@@ -51,16 +51,7 @@ status_field(){ # $1=ip $2=field
 # device id -> VM name (cloud -> cloud-vm, edge-1 -> edge1-vm)
 dev_vm(){ case "$1" in cloud) echo cloud-vm;; edge-*) echo "edge${1#edge-}-vm";; *) echo "$1-vm";; esac; }
 
-# --- Resolve VM IPs -----------------------------------------------------------
-declare -A VMIP
-for vm in cloud-vm edge1-vm edge2-vm; do
-  ip="$(vmip "$vm")"; [ -n "$ip" ] || { echo "VM $vm has no IP (is it ACTIVE?)"; exit 1; }
-  VMIP[$vm]="$ip"
-done
-CLOUD_IP="${VMIP[cloud-vm]}"
-echo "==> cloud-vm=${VMIP[cloud-vm]} edge1-vm=${VMIP[edge1-vm]} edge2-vm=${VMIP[edge2-vm]}" >&2
-
-# --- Build the service/port map from the scenario -----------------------------
+# --- Build the service/port map from the scenario (scenario-driven VM set) -----
 # Per VM, services are assigned control ports 9000,9001,... in listing order.
 declare -A SVC_VM SVC_PORT DEV_OF PSEC_OF SIDE_OF; declare -A VM_NEXT
 SERVICES=(); DEVICES=()
@@ -73,38 +64,68 @@ while IFS=, read -r svc dev psec side; do
 done < <("$BIN_HOST" describe --scenario "$SCENARIO")
 N_SVC=${#SERVICES[@]}
 
+# The VM set is derived from the scenario: cloud-vm plus one VM per edge device.
+VMS=(cloud-vm); for d in "${DEVICES[@]}"; do [ "$d" = cloud ] || VMS+=("$(dev_vm "$d")"); done
+
+# --- Resolve VM IPs -----------------------------------------------------------
+declare -A VMIP
+for vm in "${VMS[@]}"; do
+  ip="$(vmip "$vm")"; [ -n "$ip" ] || { echo "VM $vm has no IP (is it ACTIVE?)"; exit 1; }
+  VMIP[$vm]="$ip"
+done
+CLOUD_IP="${VMIP[cloud-vm]}"
+echo "==> VMs: $(for vm in "${VMS[@]}"; do printf '%s=%s ' "$vm" "${VMIP[$vm]}"; done)" >&2
+
 # inject target lists (host:port)
 INJ_SVCS=""; for s in "${SERVICES[@]}"; do INJ_SVCS+="${VMIP[${SVC_VM[$s]}]}:${SVC_PORT[$s]},"; done; INJ_SVCS="${INJ_SVCS%,}"
-INJ_COLS="${VMIP[cloud-vm]}:$CPORT,${VMIP[edge1-vm]}:$CPORT,${VMIP[edge2-vm]}:$CPORT"
+INJ_COLS=""; for vm in "${VMS[@]}"; do INJ_COLS+="${VMIP[$vm]}:$CPORT,"; done; INJ_COLS="${INJ_COLS%,}"
 inject(){ nse "$BIN_HOST" inject --scenario "$SCENARIO" --culprit "$1" --services "$INJ_SVCS" --collectors "$INJ_COLS" >/dev/null 2>&1; }
 
-# --- Deploy the mesh on the VMs ----------------------------------------------
+# --- Deploy the mesh on the VMs (ONE batched ssh per VM, not one per service) --
+# Starting 100+ services with a separate ssh each races and silently drops whole
+# devices at scale; instead each VM gets a single script that starts its collector
+# and all of its services.
 echo "==> deploying mesh on the VMs ($N_SVC services across ${#DEVICES[@]} devices + cloud)" >&2
-for vm in cloud-vm edge1-vm edge2-vm; do
+NL=$'\n'
+declare -A VM_SCRIPT
+for vm in "${VMS[@]}"; do
+  case "$vm" in cloud-vm) cname=cloud;; *) cname="edge-${vm#edge}"; cname="${cname%-vm}";; esac
+  VM_SCRIPT[$vm]="nohup /tmp/mesh collector --name $cname --port $TPORT --control-port $CPORT --http-port $HTTP --scenario /tmp/scn.yaml --stale-ms 1500 >/tmp/col.log 2>&1 &${NL}sleep 1${NL}"
+done
+for s in "${SERVICES[@]}"; do
+  vm="${SVC_VM[$s]}"; cp="${SVC_PORT[$s]}"
+  if [ "${SIDE_OF[$s]}" = "edge" ]; then
+    # recycle 0: the cut is a blackhole route that severs the established socket
+    # directly; a persistent socket also never stalls the loop ahead of the
+    # loopback edge send (which would jitter edge telemetry).
+    VM_SCRIPT[$vm]+="nohup /tmp/mesh service --name $s --culprit none --scenario /tmp/scn.yaml --edge 127.0.0.1:$TPORT --cloud $CLOUD_IP:$TPORT --control-port $cp --conn-recycle-ms 0 >/tmp/$cp.log 2>&1 &${NL}"
+  else
+    VM_SCRIPT[$vm]+="nohup /tmp/mesh service --name $s --culprit none --scenario /tmp/scn.yaml --cloud 127.0.0.1:$TPORT --control-port $cp >/tmp/$cp.log 2>&1 &${NL}"
+  fi
+done
+for vm in "${VMS[@]}"; do
   ip="${VMIP[$vm]}"
   vmput "$ip" "$BIN_VM" /tmp/mesh || { echo "scp mesh -> $vm failed"; exit 1; }
   vmput "$ip" "$SCENARIO" /tmp/scn.yaml || { echo "scp scenario -> $vm failed"; exit 1; }
-  vmssh "$ip" 'pkill -f /tmp/mesh 2>/dev/null; sleep 1; true'
-  # collector name = the device this VM hosts (cloud, edge-1, edge-2)
-  case "$vm" in cloud-vm) cname=cloud;; *) cname="edge-${vm#edge}"; cname="${cname%-vm}";; esac
-  vmssh "$ip" "nohup /tmp/mesh collector --name $cname --port $TPORT --control-port $CPORT --http-port $HTTP --scenario /tmp/scn.yaml --stale-ms 1500 >/tmp/col.log 2>&1 &"
+  # Kill any previous mesh THOROUGHLY (a weak kill leaves a stale collector holding
+  # the port with a polluted baseline, which silently breaks localisation).
+  vmssh "$ip" 'for n in 1 2 3; do pkill -9 -f /tmp/mesh 2>/dev/null; sleep 1; pgrep -f /tmp/mesh >/dev/null || break; done; sleep 1; true'
+  vmssh "$ip" "${VM_SCRIPT[$vm]}true"
 done
-sleep 2
-# start services on their VMs
-for s in "${SERVICES[@]}"; do
-  vm="${SVC_VM[$s]}"; ip="${VMIP[$vm]}"; cp="${SVC_PORT[$s]}"
-  if [ "${SIDE_OF[$s]}" = "edge" ]; then
-    # recycle 0 (persistent cloud socket): the cut here is a blackhole route that
-    # severs the established connection directly, so no recycle is needed, and a
-    # persistent socket keeps the cloud send from ever stalling the loop ahead of
-    # the (loopback, same-VM) edge send, which would jitter edge telemetry.
-    vmssh "$ip" "nohup /tmp/mesh service --name $s --culprit none --scenario /tmp/scn.yaml --edge 127.0.0.1:$TPORT --cloud $CLOUD_IP:$TPORT --control-port $cp --conn-recycle-ms 0 >/tmp/$cp.log 2>&1 &"
-  else
-    vmssh "$ip" "nohup /tmp/mesh service --name $s --culprit none --scenario /tmp/scn.yaml --cloud 127.0.0.1:$TPORT --control-port $cp >/tmp/$cp.log 2>&1 &"
-  fi
+# Wait until (almost) every service has CONNECTED to the cloud before letting the
+# baselines settle. At full scale the 100+ cross-VM connections take 20-30s to all
+# come up; if the per-service baseline freezes before a service connects, that
+# service never gets a clean baseline and localisation is poisoned.
+echo "==> waiting for services to connect (then baselines settle)" >&2
+rt=$SECONDS; target=$(( N_SVC * 97 / 100 )); [ "$target" -ge 1 ] || target=1
+while [ $((SECONDS - rt)) -lt "${READY_TIMEOUT:-90}" ]; do
+  cv="$(status_field "$CLOUD_IP" visible)"
+  echo "  cloud sees ${cv:-0}/$N_SVC" >&2
+  [ -n "$cv" ] && [ "$cv" -ge "$target" ] 2>/dev/null && break
+  sleep 5
 done
-echo "==> waiting ${BASELINE_WAIT}s for baselines" >&2
-sleep "$BASELINE_WAIT"
+# Let the last services' baselines freeze (baseline_n samples at period_ms).
+sleep "${BASELINE_SETTLE:-$BASELINE_WAIT}"
 
 # --- Self-test ----------------------------------------------------------------
 cv="$(status_field "$CLOUD_IP" visible)"
