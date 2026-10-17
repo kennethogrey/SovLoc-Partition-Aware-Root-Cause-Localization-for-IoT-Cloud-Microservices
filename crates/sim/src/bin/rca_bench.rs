@@ -115,6 +115,9 @@ fn parse_graph(text: &str, names: &[String]) -> CallGraph {
     g
 }
 
+/// One case's result: per ranker, its name and whether the culprit was top-1/top-3.
+type CaseScore = Vec<(&'static str, bool, bool)>;
+
 /// Score one case with every ranker. Returns `(ranker_name, top1, top3)` per
 /// ranker. The anomaly is the robust deviation of each service's last sample from
 /// its own pre-fault baseline, exactly as the simulator and the mesh compute it.
@@ -123,7 +126,7 @@ fn score_case(
     series: &[Vec<f64>],
     graph: &CallGraph,
     culprit: usize,
-) -> Vec<(&'static str, bool, bool)> {
+) -> CaseScore {
     let n = names.len();
     let t = series.iter().map(|s| s.len()).min().unwrap_or(0);
     let baseline_len = (t / 3).clamp(5, 40).min(t.saturating_sub(1).max(1));
@@ -132,7 +135,7 @@ fn score_case(
     let mut anomaly = vec![0.0_f64; n];
     let mut observed = vec![false; n];
     for i in 0..n {
-        if series[i].len() >= baseline_len + 1 {
+        if series[i].len() > baseline_len {
             let base: Vec<f64> = series[i][..baseline_len]
                 .iter()
                 .copied()
@@ -158,7 +161,7 @@ fn score_case(
 }
 
 /// Load one case directory and score it; None when it is not a usable case.
-fn run_case(dir: &Path, metric: &str, cli_culprit: Option<&str>) -> Result<Option<Vec<(&'static str, bool, bool)>>> {
+fn run_case(dir: &Path, metric: &str, cli_culprit: Option<&str>) -> Result<Option<CaseScore>> {
     let mpath = dir.join("metrics.csv");
     if !mpath.exists() {
         return Ok(None);
@@ -175,7 +178,10 @@ fn run_case(dir: &Path, metric: &str, cli_culprit: Option<&str>) -> Result<Optio
             .unwrap_or_default(),
     };
     let Some(culprit) = names.iter().position(|n| n == &label) else {
-        eprintln!("skip {}: root cause '{label}' not among services", dir.display());
+        eprintln!(
+            "skip {}: root cause '{label}' not among services",
+            dir.display()
+        );
         return Ok(None);
     };
     Ok(Some(score_case(&names, &series, &graph, culprit)))
@@ -214,7 +220,10 @@ fn main() -> Result<()> {
     }
 
     if n_cases == 0 {
-        bail!("no usable cases under {} (each case needs metrics.csv + a label)", cli.dir);
+        bail!(
+            "no usable cases under {} (each case needs metrics.csv + a label)",
+            cli.dir
+        );
     }
 
     if let Some(parent) = Path::new(&cli.out).parent() {
@@ -222,7 +231,10 @@ fn main() -> Result<()> {
     }
     let mut w = csv::Writer::from_path(&cli.out)?;
     w.write_record(["ranker", "cases", "top1_pct", "top3_pct"])?;
-    println!("External benchmark ({n_cases} cases, metric {}):", cli.metric);
+    println!(
+        "External benchmark ({n_cases} cases, metric {}):",
+        cli.metric
+    );
     for (i, (name, _)) in RANKERS.iter().enumerate() {
         let t1 = 100.0 * top1[i] as f64 / n_cases as f64;
         let t3 = 100.0 * top3[i] as f64 / n_cases as f64;
@@ -279,7 +291,10 @@ time,gateway_latency,api_latency,db_latency
         let scores = score_case(&names, &series, &graph, culprit);
         let by = |nm: &str| scores.iter().find(|(n, _, _)| *n == nm).unwrap();
         assert!(by("ppr").1, "PPR should get top-1 on the deepest culprit");
-        assert!(!by("argmax").1, "argmax should miss top-1 (picks the amplified caller)");
+        assert!(
+            !by("argmax").1,
+            "argmax should miss top-1 (picks the amplified caller)"
+        );
         // Everyone should at least rank the culprit in the top 3 of 3.
         assert!(by("ppr").2 && by("argmax").2);
     }

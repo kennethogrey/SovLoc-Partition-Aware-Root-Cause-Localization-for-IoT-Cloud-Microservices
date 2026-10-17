@@ -37,15 +37,16 @@ use scenario::ScenarioTopology;
 pub const STEP_MS: f64 = 100.0; // one simulation step is 100 ms (a diagnostic tick)
 pub const BASELINE_LEN: usize = 40; // pre-fault steps used as the robust baseline
 pub const STABILITY: usize = 3; // consecutive correct top-1 steps to confirm
+
 // Bytes on the wire are measured from the real serialized formats, not invented.
-// SAMPLE_BYTES is the byte length of one telemetry record as the mesh serializes
-// it (a JSON `{"service","value","ts_ms"}` line plus a newline framing byte), for a
+// SAMPLE_BYTES is the byte length of one telemetry record as the mesh serializes it
+// (a JSON `{"service","value","ts_ms"}` line plus a newline framing byte), for a
 // representative service name and value; VERDICT_BYTES is the compact verdict a
-// decentralised collector ships on diagnosis (`{"culprit","score"}` plus newline).
-// `bytes_wire_formats_match_constants` in the tests verifies both against the exact
-// serialized strings, so these are a measured size with a stated method. The old
-// values (256 and 64) were model constants the review flagged; the per-message size
-// barely differs now, and the real saving is in how OFTEN each message crosses.
+// decentralised collector ships on diagnosis (`{"culprit","score"}` plus newline). The
+// `bytes_wire_formats_match_constants` test checks both against the exact serialized
+// strings, so these are a measured size with a stated method. The earlier values (256
+// and 64) were model constants; the per-message size barely differs now, and the real
+// saving is in how often each message crosses.
 pub const SAMPLE_BYTES: u64 = 65; // one telemetry record on the wire (measured)
 pub const VERDICT_BYTES: u64 = 41; // one compact verdict on the wire (measured)
 const FAULT_MEAN: f64 = 60.0;
@@ -253,7 +254,10 @@ pub fn generate_metrics(
     let mag_dist = Normal::new(FAULT_MEAN, FAULT_SD).unwrap();
     // Draw one magnitude per culprit first (single-culprit order is unchanged),
     // then the per-step noise field.
-    let mags: Vec<f64> = culprits.iter().map(|_| mag_dist.sample(rng).max(20.0)).collect();
+    let mags: Vec<f64> = culprits
+        .iter()
+        .map(|_| mag_dist.sample(rng).max(20.0))
+        .collect();
     let dists: Vec<Vec<Option<usize>>> = culprits
         .iter()
         .map(|&c| ancestor_distances(&topo.graph.incoming, c))
@@ -581,7 +585,7 @@ pub struct RunParams {
     pub h: f64,
     pub persist: usize, // consecutive steps above h required to declare an onset
     pub seed: u64,
-    pub culprit: Option<usize>, // fixed culprit, or random when None
+    pub culprit: Option<usize>,  // fixed culprit, or random when None
     pub culprit2: Option<usize>, // optional simultaneous second fault (double fault)
     pub link: Link,              // network impairments (E5); Link::default() = ideal link
 }
@@ -1096,7 +1100,9 @@ pub fn simulate_scenario(st: &ScenarioTopology, p: &ScenarioRunParams) -> Scenar
             culprits.push(c2);
         }
     }
-    let metrics = generate_metrics(&topo, &culprits, p.fault, fault_at, horizon, p.loss, &mut rng);
+    let metrics = generate_metrics(
+        &topo, &culprits, p.fault, fault_at, horizon, p.loss, &mut rng,
+    );
 
     // Absolute cut window end for device `d`.
     let dev_cross = |d: usize| -> Transport {
@@ -1327,7 +1333,15 @@ mod tests {
         let mut rng = StdRng::seed_from_u64(7);
         let fault_at = 60;
         let horizon = 200;
-        let m = generate_metrics(&topo, &[1, 6], FaultKind::Cpu, fault_at, horizon, 0.0, &mut rng);
+        let m = generate_metrics(
+            &topo,
+            &[1, 6],
+            FaultKind::Cpu,
+            fault_at,
+            horizon,
+            0.0,
+            &mut rng,
+        );
         // A CPU fault moves only the culprit's own metric; both culprits should be
         // well above their own early baseline late in the horizon.
         let late = |i: usize| m[i][horizon - 1];
@@ -1345,7 +1359,10 @@ mod tests {
         let mut pp = base_params(Placement::CentralNaive, 300, 2);
         pp.link.partial = 0.3; // 70% of edge samples squeeze through the degraded link
         let partial = simulate(&pp);
-        assert!(partial.diagnosed, "partial partition should localize the edge fault");
+        assert!(
+            partial.diagnosed,
+            "partial partition should localize the edge fault"
+        );
         assert!(
             total.diagnosed && partial.ttd < total.ttd,
             "partial ttd {} should beat total-cut ttd {} (diagnosed {})",
@@ -1362,7 +1379,10 @@ mod tests {
         fl.link.flap_on = 10;
         fl.link.flap_off = 10; // link returns for 10 steps out of every 20
         let flap = simulate(&fl);
-        assert!(flap.diagnosed, "a flapping link should give the central collector a glimpse");
+        assert!(
+            flap.diagnosed,
+            "a flapping link should give the central collector a glimpse"
+        );
         assert!(
             total.diagnosed && flap.ttd < total.ttd,
             "flapping ttd {} should beat total-cut ttd {}",

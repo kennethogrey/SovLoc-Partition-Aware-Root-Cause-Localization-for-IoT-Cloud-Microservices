@@ -399,7 +399,11 @@ fn experiment_e5(base: u64, reps: usize) -> Vec<E5Row> {
     let services = build_topology(TopoKind::Chain, 5).graph.n; // 12
     #[allow(clippy::type_complexity)]
     let conds: Vec<(&'static str, Vec<f64>, Box<dyn Fn(f64, &mut RunParams)>)> = vec![
-        ("loss", vec![0.0, 0.02, 0.05, 0.10], Box::new(|lv, p| p.loss = lv)),
+        (
+            "loss",
+            vec![0.0, 0.02, 0.05, 0.10],
+            Box::new(|lv, p| p.loss = lv),
+        ),
         (
             "jitter",
             vec![0.0, 5.0, 10.0],
@@ -624,7 +628,13 @@ fn experiment_energy(base: u64, runs: usize) {
             let joules = b.wrapping_sub(a) as f64 / 1e6;
             let watts = joules / secs;
             let marginal = (joules - idle_w * secs).max(0.0);
-            let per = |j: f64| if diagnosed > 0 { j / diagnosed as f64 } else { f64::NAN };
+            let per = |j: f64| {
+                if diagnosed > 0 {
+                    j / diagnosed as f64
+                } else {
+                    f64::NAN
+                }
+            };
             println!(
                 "E4 energy: {runs} localizations in {secs:.2}s drew {joules:.3} J ({watts:.1} W; \
                  idle {idle_w:.1} W), {diagnosed} diagnosed. J/diagnosis: {:.6} total, \

@@ -523,8 +523,7 @@ fn main() -> Result<()> {
     for tp in &topos {
         for ft in &faults {
             // One map of (seed, culprit) -> top-1 hit per ranker.
-            let mut maps: Vec<BTreeMap<(u64, String), bool>> =
-                vec![BTreeMap::new(); RANKERS.len()];
+            let mut maps: Vec<BTreeMap<(u64, String), bool>> = vec![BTreeMap::new(); RANKERS.len()];
             for r in e2.iter().filter(|r| &r.topology == tp && &r.fault == ft) {
                 if let Some(ri) = RANKERS.iter().position(|&n| n == r.ranker) {
                     maps[ri].insert((r.seed, r.culprit.clone()), r.final_rank == 1);
@@ -593,8 +592,7 @@ fn main() -> Result<()> {
     let (baro_diff, baro_lo, baro_hi) =
         bootstrap_ci(&ppr_minus_baro, mean, N_BOOT, 0.025, BOOT_SEED + 4);
     let baro_p = diff_p(&ppr_minus_baro, BOOT_SEED + 5);
-    let (rw_diff, rw_lo, rw_hi) =
-        bootstrap_ci(&ppr_minus_rw, mean, N_BOOT, 0.025, BOOT_SEED + 6);
+    let (rw_diff, rw_lo, rw_hi) = bootstrap_ci(&ppr_minus_rw, mean, N_BOOT, 0.025, BOOT_SEED + 6);
     let rw_p = diff_p(&ppr_minus_rw, BOOT_SEED + 7);
 
     // ---- Holm over the difference-test family -------------------------------

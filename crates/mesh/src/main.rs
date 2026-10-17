@@ -769,8 +769,17 @@ fn status_json(ctx: &Ctx) -> String {
     format!(
         "{{\"name\":\"{}\",\"visible\":{},\"n\":{},\"top1\":{},\"expect\":{},\"localized_ms\":{},\
          \"t_rel_s\":{:.1},\"bytes_in\":{},\"p99_handler_us\":{},\"rss_kb\":{},\"cpu_ms\":{}}}\n",
-        ctx.name, visible, ctx.graph.n, top1, expect, localized_ms, t_rel, bytes_in, p99_us,
-        rss_kb, cpu_ms
+        ctx.name,
+        visible,
+        ctx.graph.n,
+        top1,
+        expect,
+        localized_ms,
+        t_rel,
+        bytes_in,
+        p99_us,
+        rss_kb,
+        cpu_ms
     )
 }
 
