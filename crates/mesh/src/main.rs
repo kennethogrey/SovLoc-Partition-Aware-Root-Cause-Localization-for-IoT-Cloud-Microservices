@@ -839,10 +839,52 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
         .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
     let mut rng = rand::rngs::StdRng::seed_from_u64(a.seed ^ name_hash);
 
-    let mut cloud_conn: Option<TcpStream> = None;
-    let mut cloud_conn_since: u128 = 0;
     let mut edge_conn: Option<TcpStream> = None;
     let mut ticker = tokio::time::interval(Duration::from_millis(a.period_ms));
+
+    // Raw-TCP cloud sender: a dedicated task owns the cloud connection (and the
+    // optional recycle), fed by a small bounded channel, so the main loop never
+    // blocks on the cloud link. When the cloud is partitioned (a blackhole route or
+    // a disconnect) the task's write/reconnect times out and the cloud goes blind,
+    // while the loopback edge send in the loop below is never stalled, so the edge
+    // collector keeps localizing. Mirrors the HTTP (Crane Cloud) sender above.
+    let cloud_raw_tx = a.cloud.as_ref().map(|addr| {
+        let addr = addr.clone();
+        let recycle = a.conn_recycle_ms as u128;
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
+        tokio::spawn(async move {
+            let mut conn: Option<TcpStream> = None;
+            let mut since: u128 = 0;
+            while let Some(line) = rx.recv().await {
+                let now = now_ms();
+                if recycle > 0 && conn.is_some() && now.saturating_sub(since) >= recycle {
+                    conn = None;
+                }
+                if conn.is_none() {
+                    match tokio::time::timeout(Duration::from_millis(300), TcpStream::connect(&addr))
+                        .await
+                    {
+                        Ok(Ok(s)) => {
+                            conn = Some(s);
+                            since = now;
+                        }
+                        _ => continue, // unreachable while partitioned: shed this sample
+                    }
+                }
+                if let Some(s) = conn.as_mut() {
+                    let w = tokio::time::timeout(Duration::from_millis(500), async {
+                        s.write_all(line.as_bytes()).await?;
+                        s.write_all(b"\n").await
+                    })
+                    .await;
+                    if !matches!(w, Ok(Ok(()))) {
+                        conn = None; // write failed or timed out (partitioned)
+                    }
+                }
+            }
+        });
+        tx
+    });
 
     // Wide-area cloud sender: a dedicated task owns one keep-alive connection and
     // streams telemetry to the Crane Cloud collector, so the main loop never
@@ -891,33 +933,16 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
         let cloud_dropped = a.drop_cloud_dur_sec > 0.0
             && rel_sec >= a.drop_cloud_after_sec
             && rel_sec < a.drop_cloud_after_sec + a.drop_cloud_dur_sec;
-        if cloud_dropped {
-            cloud_conn = None; // force reconnect (which will also fail) after heal
-        }
 
-        if let Some(addr) = &a.cloud {
+        // Cloud link (raw TCP): hand the sample to the dedicated sender without
+        // blocking; drop it if the channel is full (link slow or partitioned),
+        // which is exactly the partition behaviour the study measures.
+        if let Some(tx) = &cloud_raw_tx {
             if !cloud_dropped {
-                // Recycle the cloud socket so a real partition (which only blocks
-                // NEW connections, e.g. a k8s NetworkPolicy) actually cuts the
-                // stream instead of riding an already-established one. Reopening
-                // while partitioned fails, so the cloud stops hearing this service
-                // and goes stale, i.e. blind, exactly as a disconnect would.
-                if a.conn_recycle_ms > 0
-                    && cloud_conn.is_some()
-                    && now.saturating_sub(cloud_conn_since) >= a.conn_recycle_ms as u128
-                {
-                    cloud_conn = None;
-                }
-                let was_connected = cloud_conn.is_some();
-                send_line(addr, &mut cloud_conn, &line).await;
-                if !was_connected && cloud_conn.is_some() {
-                    cloud_conn_since = now;
-                }
+                let _ = tx.try_send(line.clone());
             }
         }
-        // Wide-area cloud link (Crane Cloud): hand the sample to the streaming
-        // sender without blocking; drop it if the channel is full (link slow or
-        // partitioned), which is the partition behaviour the study measures.
+        // Wide-area cloud link (Crane Cloud): same non-blocking hand-off.
         if let Some(tx) = &cloud_tx {
             if !cloud_dropped {
                 let _ = tx.try_send(line.clone());
