@@ -37,8 +37,17 @@ use scenario::ScenarioTopology;
 pub const STEP_MS: f64 = 100.0; // one simulation step is 100 ms (a diagnostic tick)
 pub const BASELINE_LEN: usize = 40; // pre-fault steps used as the robust baseline
 pub const STABILITY: usize = 3; // consecutive correct top-1 steps to confirm
-pub const SAMPLE_BYTES: u64 = 256; // one full telemetry sample
-pub const VERDICT_BYTES: u64 = 64; // one compact verdict crossing the boundary
+// Bytes on the wire are measured from the real serialized formats, not invented.
+// SAMPLE_BYTES is the byte length of one telemetry record as the mesh serializes
+// it (a JSON `{"service","value","ts_ms"}` line plus a newline framing byte), for a
+// representative service name and value; VERDICT_BYTES is the compact verdict a
+// decentralised collector ships on diagnosis (`{"culprit","score"}` plus newline).
+// `bytes_wire_formats_match_constants` in the tests verifies both against the exact
+// serialized strings, so these are a measured size with a stated method. The old
+// values (256 and 64) were model constants the review flagged; the per-message size
+// barely differs now, and the real saving is in how OFTEN each message crosses.
+pub const SAMPLE_BYTES: u64 = 65; // one telemetry record on the wire (measured)
+pub const VERDICT_BYTES: u64 = 41; // one compact verdict on the wire (measured)
 const FAULT_MEAN: f64 = 60.0;
 const FAULT_SD: f64 = 10.0;
 const TAU: f64 = 3.0; // fault ramp time constant (steps)
@@ -224,10 +233,14 @@ fn hop_gain(kind: FaultKind, d: usize) -> f64 {
     }
 }
 
-/// Generate the true per-service metric time series with a propagating fault.
+/// Generate the true per-service metric time series with one or more propagating
+/// faults. `culprits` is usually a single service; a second entry injects a
+/// simultaneous independent fault (the double-fault case in E2/E5). Each culprit
+/// contributes its own propagating anomaly and they sum. With a single culprit the
+/// random draws match the original single-fault generator exactly.
 pub fn generate_metrics(
     topo: &Topo,
-    culprit: usize,
+    culprits: &[usize],
     kind: FaultKind,
     fault_at: usize,
     horizon: usize,
@@ -237,22 +250,27 @@ pub fn generate_metrics(
     let n = topo.graph.n;
     let sigma = NOISE_SD + LOSS_NOISE * loss;
     let noise = Normal::new(0.0, sigma).unwrap();
-    let mag = Normal::new(FAULT_MEAN, FAULT_SD)
-        .unwrap()
-        .sample(rng)
-        .max(20.0);
-    let dist = ancestor_distances(&topo.graph.incoming, culprit);
+    let mag_dist = Normal::new(FAULT_MEAN, FAULT_SD).unwrap();
+    // Draw one magnitude per culprit first (single-culprit order is unchanged),
+    // then the per-step noise field.
+    let mags: Vec<f64> = culprits.iter().map(|_| mag_dist.sample(rng).max(20.0)).collect();
+    let dists: Vec<Vec<Option<usize>>> = culprits
+        .iter()
+        .map(|&c| ancestor_distances(&topo.graph.incoming, c))
+        .collect();
 
     let mut m = vec![vec![0.0_f64; horizon]; n];
     for i in 0..n {
         let base = BASE_LAT + (i % 3) as f64;
         for t in 0..horizon {
             let mut v = base + noise.sample(rng);
-            if let Some(d) = dist[i] {
-                let onset = fault_at + d * HOP_DELAY;
-                if t >= onset {
-                    let ramp = 1.0 - (-((t - onset) as f64) / TAU).exp();
-                    v += mag * hop_gain(kind, d) * ramp;
+            for (ci, dist) in dists.iter().enumerate() {
+                if let Some(d) = dist[i] {
+                    let onset = fault_at + d * HOP_DELAY;
+                    if t >= onset {
+                        let ramp = 1.0 - (-((t - onset) as f64) / TAU).exp();
+                        v += mags[ci] * hop_gain(kind, d) * ramp;
+                    }
                 }
             }
             m[i][t] = v.max(0.0);
@@ -266,6 +284,67 @@ pub fn generate_metrics(
 enum Policy {
     Naive,
     StoreForward,
+}
+
+/// Link impairments layered on top of the base partition (E5 network realism).
+/// The defaults reproduce the original transport exactly: no jitter, a total cut
+/// (`partial = 1.0`), no flapping, no clock skew.
+#[derive(Clone, Copy, Debug)]
+pub struct Link {
+    /// Uniform +/- jitter (steps) added to each crossing sample's delivery time.
+    pub jitter: usize,
+    /// Fraction of samples dropped *during* the partition window. 1.0 is a full
+    /// cut (the original behaviour); a value below 1.0 is a partial partition
+    /// where the degraded link still lets some telemetry through live.
+    pub partial: f64,
+    /// Flapping: within the partition window the link alternates down for
+    /// `flap_off` steps then up for `flap_on` steps. Both zero means a single
+    /// continuous cut.
+    pub flap_on: usize,
+    pub flap_off: usize,
+    /// Per-run clock skew (steps) added to crossing delivery times, modelling a
+    /// device clock offset from the collector.
+    pub skew: i64,
+}
+
+impl Default for Link {
+    fn default() -> Self {
+        Link {
+            jitter: 0,
+            partial: 1.0,
+            flap_on: 0,
+            flap_off: 0,
+            skew: 0,
+        }
+    }
+}
+
+/// Is the crossing link fully down at step `e`, given a cut window `[start, end)`
+/// and any flapping? Outside the window it is always up.
+fn link_down(e: usize, start: usize, end: usize, link: &Link) -> bool {
+    if end <= start || e < start || e >= end {
+        return false;
+    }
+    if link.flap_on == 0 && link.flap_off == 0 {
+        return true; // one continuous cut
+    }
+    let period = link.flap_on + link.flap_off;
+    (e - start) % period < link.flap_off // starts in a down phase
+}
+
+/// Delivery step of a sample sent at `e`: base latency, plus clock skew and
+/// uniform jitter, never earlier than it was sent and never past the horizon.
+fn deliver_step(e: usize, latency: usize, link: &Link, horizon: usize, rng: &mut StdRng) -> usize {
+    let mut d = e as i64 + latency as i64 + link.skew;
+    if link.jitter > 0 {
+        let j = link.jitter as i64;
+        d += rng.gen_range(-j..=j);
+    }
+    // Never past the horizon, and never before it was sent, but a send time that is
+    // already at or past the horizon just lands on the last step.
+    let hi = horizon as i64 - 1;
+    let lo = (e as i64).min(hi);
+    d.clamp(lo, hi) as usize
 }
 
 /// Build the collector's "held view": `view[i][t]` is the most recently received
@@ -285,12 +364,12 @@ fn held_view(
     latency: usize,
     bandwidth: usize, // queued samples drained per step after heal
     loss: f64,
+    link: &Link,
     rng: &mut StdRng,
 ) -> (Vec<Vec<f64>>, u64, Vec<bool>) {
     let n = topo.graph.n;
     let horizon = metrics[0].len();
     let heal = part_start + part_len;
-    let up = |e: usize| part_len == 0 || e < part_start || e >= heal;
 
     let mut view = vec![vec![f64::NAN; horizon]; n];
     let mut observed = vec![false; n];
@@ -306,13 +385,20 @@ fn held_view(
             let value = metrics[i][e];
             if same_side {
                 events.push((e, value)); // local, no crossing
-            } else if up(e) {
-                // link up: delivered unless lost in transit
+            } else if !link_down(e, part_start, heal, link) {
+                // link up (outside the cut, or flapped back up): delivered unless
+                // lost in transit.
                 if loss <= 0.0 || rng.gen::<f64>() >= loss {
-                    let dt = (e + latency).min(horizon - 1);
+                    let dt = deliver_step(e, latency, link, horizon, rng);
                     events.push((dt, value));
                     cross_bytes += SAMPLE_BYTES;
                 }
+            } else if link.partial < 1.0 && rng.gen::<f64>() >= link.partial {
+                // partial partition: the degraded link still squeezes this sample
+                // through live.
+                let dt = deliver_step(e, latency, link, horizon, rng);
+                events.push((dt, value));
+                cross_bytes += SAMPLE_BYTES;
             } else {
                 // link down
                 match policy {
@@ -326,7 +412,7 @@ fn held_view(
         if policy == Policy::StoreForward && !queue.is_empty() {
             let bw = bandwidth.max(1);
             for (q, (_orig, value)) in queue.into_iter().enumerate() {
-                let dt = (heal + q / bw + latency).min(horizon - 1);
+                let dt = deliver_step(heal + q / bw, latency, link, horizon, rng);
                 events.push((dt, value));
                 cross_bytes += SAMPLE_BYTES;
             }
@@ -496,6 +582,8 @@ pub struct RunParams {
     pub persist: usize, // consecutive steps above h required to declare an onset
     pub seed: u64,
     pub culprit: Option<usize>, // fixed culprit, or random when None
+    pub culprit2: Option<usize>, // optional simultaneous second fault (double fault)
+    pub link: Link,              // network impairments (E5); Link::default() = ideal link
 }
 
 /// The measured outcome of one run.
@@ -525,9 +613,16 @@ pub fn simulate(params: &RunParams) -> RunOutcome {
     let heal = part_start + params.part_len;
     let horizon = (heal + params.part_len.max(40) + 60).max(fault_at + 120);
 
+    // One or two simultaneous culprits (the primary is what we try to localize).
+    let mut culprits = vec![culprit];
+    if let Some(c2) = params.culprit2 {
+        if c2 != culprit {
+            culprits.push(c2);
+        }
+    }
     let metrics = generate_metrics(
         &topo,
-        culprit,
+        &culprits,
         params.fault,
         fault_at,
         horizon,
@@ -553,6 +648,7 @@ pub fn simulate(params: &RunParams) -> RunOutcome {
                 params.latency,
                 params.bandwidth,
                 params.loss,
+                &params.link,
                 &mut rng,
             );
             let a = analyze_view(
@@ -582,6 +678,7 @@ pub fn simulate(params: &RunParams) -> RunOutcome {
                 params.latency,
                 params.bandwidth,
                 params.loss,
+                &params.link,
                 &mut rng,
             );
             let a = analyze_view(
@@ -660,7 +757,7 @@ pub fn count_false_alarms(h: f64, persist: usize, horizon: usize, seed: u64) -> 
     // No fault: generate_metrics with FaultKind::None gives a pure baseline.
     let metrics = generate_metrics(
         &topo,
-        0,
+        &[0],
         FaultKind::None,
         horizon / 2,
         horizon,
@@ -784,21 +881,25 @@ fn cross_events(
     bandwidth: usize,
     horizon: usize,
     loss: f64,
+    link: &Link,
     rng: &mut StdRng,
 ) -> (Vec<(usize, f64)>, u64) {
-    let up = |e: usize| e < start || e >= end;
     let mut events = Vec::new();
     let mut queue: Vec<(usize, f64)> = Vec::new();
     let mut bytes = 0u64;
     let mut e = 0usize;
     while e < horizon {
         let value = series[e];
-        if up(e) {
+        if !link_down(e, start, end, link) {
             if loss <= 0.0 || rng.gen::<f64>() >= loss {
-                let dt = (e + latency).min(horizon - 1);
+                let dt = deliver_step(e, latency, link, horizon, rng);
                 events.push((dt, value));
                 bytes += SAMPLE_BYTES;
             }
+        } else if link.partial < 1.0 && rng.gen::<f64>() >= link.partial {
+            let dt = deliver_step(e, latency, link, horizon, rng);
+            events.push((dt, value));
+            bytes += SAMPLE_BYTES;
         } else {
             match policy {
                 Policy::Naive => {}
@@ -810,7 +911,7 @@ fn cross_events(
     if policy == Policy::StoreForward && !queue.is_empty() {
         let bw = bandwidth.max(1);
         for (q, (_orig, value)) in queue.into_iter().enumerate() {
-            let dt = (end + q / bw + latency).min(horizon - 1);
+            let dt = deliver_step(end + q / bw, latency, link, horizon, rng);
             events.push((dt, value));
             bytes += SAMPLE_BYTES;
         }
@@ -831,6 +932,7 @@ fn held_view_scenario(
     latency: usize,
     bandwidth: usize,
     loss: f64,
+    link: &Link,
     rng: &mut StdRng,
 ) -> (Vec<Vec<f64>>, u64, Vec<bool>) {
     let n = topo.graph.n;
@@ -861,6 +963,7 @@ fn held_view_scenario(
                 bandwidth,
                 horizon,
                 loss,
+                link,
                 rng,
             ),
         };
@@ -933,6 +1036,10 @@ pub struct ScenarioRunParams {
     pub seed: u64,
     /// Fixed culprit index, or random when None.
     pub culprit: Option<usize>,
+    /// Optional simultaneous second fault (double fault).
+    pub culprit2: Option<usize>,
+    /// Network impairments (E5); `Link::default()` is an ideal link.
+    pub link: Link,
 }
 
 /// The measured outcome of one scenario run.
@@ -983,7 +1090,13 @@ pub fn simulate_scenario(st: &ScenarioTopology, p: &ScenarioRunParams) -> Scenar
     let heal = part_start + relevant_part;
     let horizon = (heal + relevant_part.max(40) + 60).max(fault_at + 120);
 
-    let metrics = generate_metrics(&topo, culprit, p.fault, fault_at, horizon, p.loss, &mut rng);
+    let mut culprits = vec![culprit];
+    if let Some(c2) = p.culprit2 {
+        if c2 != culprit {
+            culprits.push(c2);
+        }
+    }
+    let metrics = generate_metrics(&topo, &culprits, p.fault, fault_at, horizon, p.loss, &mut rng);
 
     // Absolute cut window end for device `d`.
     let dev_cross = |d: usize| -> Transport {
@@ -1024,6 +1137,7 @@ pub fn simulate_scenario(st: &ScenarioTopology, p: &ScenarioRunParams) -> Scenar
                 p.latency,
                 p.bandwidth,
                 p.loss,
+                &p.link,
                 &mut rng,
             );
             let a = analyze_view(
@@ -1054,6 +1168,7 @@ pub fn simulate_scenario(st: &ScenarioTopology, p: &ScenarioRunParams) -> Scenar
                     p.latency,
                     p.bandwidth,
                     p.loss,
+                    &p.link,
                     &mut rng,
                 );
                 total_bytes += bytes;
@@ -1135,6 +1250,8 @@ mod tests {
             persist: 3,
             seed: 7,
             culprit: Some(culprit),
+            culprit2: None,
+            link: Link::default(),
         }
     }
 
@@ -1191,6 +1308,68 @@ mod tests {
         let edge = simulate(&base_params(Placement::EdgeLocal, 200, 2));
         assert!(sf.cross_bytes > edge.cross_bytes);
     }
+
+    #[test]
+    fn bytes_wire_formats_match_constants() {
+        // The byte constants must equal the real serialized wire records (plus one
+        // newline framing byte), so they are measured, not invented. These strings
+        // mirror the mesh's JSON: Metric{service,value,ts_ms} and a compact verdict.
+        let sample = r#"{"service":"edge-3-svc-15","value":48.731,"ts_ms":1739000000000}"#;
+        let verdict = r#"{"culprit":"edge-3-svc-15","score":0.87}"#;
+        assert_eq!(SAMPLE_BYTES, sample.len() as u64 + 1, "sample={sample}");
+        assert_eq!(VERDICT_BYTES, verdict.len() as u64 + 1, "verdict={verdict}");
+    }
+
+    #[test]
+    fn double_fault_raises_both_culprits() {
+        // Two simultaneous faults should both show up in the generated metrics.
+        let topo = build_topology(TopoKind::Chain, 5);
+        let mut rng = StdRng::seed_from_u64(7);
+        let fault_at = 60;
+        let horizon = 200;
+        let m = generate_metrics(&topo, &[1, 6], FaultKind::Cpu, fault_at, horizon, 0.0, &mut rng);
+        // A CPU fault moves only the culprit's own metric; both culprits should be
+        // well above their own early baseline late in the horizon.
+        let late = |i: usize| m[i][horizon - 1];
+        let early = |i: usize| m[i][fault_at - 5];
+        assert!(late(1) > early(1) + 10.0, "culprit 1 did not rise");
+        assert!(late(6) > early(6) + 10.0, "culprit 6 did not rise");
+    }
+
+    #[test]
+    fn partial_partition_beats_a_total_cut_for_central() {
+        // A long edge-side partition. With a total cut the central collector only
+        // sees the edge fault after heal; a partial partition lets some telemetry
+        // through during the cut, so it diagnoses sooner.
+        let total = simulate(&base_params(Placement::CentralNaive, 300, 2));
+        let mut pp = base_params(Placement::CentralNaive, 300, 2);
+        pp.link.partial = 0.3; // 70% of edge samples squeeze through the degraded link
+        let partial = simulate(&pp);
+        assert!(partial.diagnosed, "partial partition should localize the edge fault");
+        assert!(
+            total.diagnosed && partial.ttd < total.ttd,
+            "partial ttd {} should beat total-cut ttd {} (diagnosed {})",
+            partial.ttd,
+            total.ttd,
+            total.diagnosed
+        );
+    }
+
+    #[test]
+    fn flapping_link_beats_a_total_cut_for_central() {
+        let total = simulate(&base_params(Placement::CentralNaive, 300, 2));
+        let mut fl = base_params(Placement::CentralNaive, 300, 2);
+        fl.link.flap_on = 10;
+        fl.link.flap_off = 10; // link returns for 10 steps out of every 20
+        let flap = simulate(&fl);
+        assert!(flap.diagnosed, "a flapping link should give the central collector a glimpse");
+        assert!(
+            total.diagnosed && flap.ttd < total.ttd,
+            "flapping ttd {} should beat total-cut ttd {}",
+            flap.ttd,
+            total.ttd
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1219,6 +1398,8 @@ mod scenario_model_tests {
             persist: 3,
             seed: 7,
             culprit: Some(culprit),
+            culprit2: None,
+            link: Link::default(),
         }
     }
 

@@ -116,6 +116,62 @@ fn read_em(path: &str) -> Result<Vec<EmRaw>> {
     Ok(out)
 }
 
+/// One raw per-run record of the E5 network-realism sweep.
+#[derive(Deserialize, Clone)]
+struct E5Raw {
+    #[allow(dead_code)]
+    experiment: String,
+    condition: String,
+    level: f64,
+    #[allow(dead_code)]
+    placement: String,
+    #[allow(dead_code)]
+    ranker: String,
+    #[allow(dead_code)]
+    n_services: usize,
+    #[allow(dead_code)]
+    seed: u64,
+    #[allow(dead_code)]
+    culprit: String,
+    #[allow(dead_code)]
+    culprit_side: String,
+    diagnosed: bool,
+    ttd_steps: Option<f64>,
+    #[allow(dead_code)]
+    ttd_ms: Option<f64>,
+    #[allow(dead_code)]
+    censored: bool,
+    censored_at: Option<f64>,
+    #[allow(dead_code)]
+    det_latency: Option<f64>,
+    false_alarm: bool,
+    final_rank: i64,
+    cross_bytes: u64,
+}
+
+fn read_e5(path: &str) -> Result<Vec<E5Raw>> {
+    let mut rdr = csv::Reader::from_path(path).with_context(|| format!("open {path}"))?;
+    let mut out = Vec::new();
+    for rec in rdr.deserialize() {
+        out.push(rec?);
+    }
+    Ok(out)
+}
+
+fn e5_censored(r: &E5Raw) -> Censored {
+    if r.diagnosed {
+        Censored {
+            time: r.ttd_steps.unwrap_or(0.0),
+            event: true,
+        }
+    } else {
+        Censored {
+            time: r.censored_at.unwrap_or(0.0),
+            event: false,
+        }
+    }
+}
+
 fn em_censored(r: &EmRaw) -> Censored {
     if r.diagnosed {
         Censored {
@@ -213,6 +269,7 @@ fn main() -> Result<()> {
     let e1 = read(&format!("{dir}/raw_e1.csv"))?;
     let e2 = read(&format!("{dir}/raw_e2.csv"))?;
     let e4 = read(&format!("{dir}/raw_e4.csv"))?;
+    let e5 = read_e5(&format!("{dir}/raw_e5.csv")).unwrap_or_default();
     let e7 = read(&format!("{dir}/raw_e7.csv"))?;
 
     let mut numbers = String::new();
@@ -435,15 +492,23 @@ fn main() -> Result<()> {
     let (ex, ey) = slope_pts("edge-local");
     let (el_slope, el_slo, el_shi, el_sp) = slope_boot(&ex, &ey, BOOT_SEED + 1);
 
-    // ---- E2 ablation: PPR vs argmax top-1 accuracy, paired by seed -----------
+    // ---- E2 ablation: four rankers' top-1 accuracy, paired by seed -----------
+    // argmax and BARO are graph-blind; random-walk is the undirected graph
+    // baseline; PPR is ours. Every ranker sees the identical held view for a given
+    // (seed, culprit), so the comparison is paired.
+    const RANKERS: [&str; 4] = ["argmax", "baro", "random-walk", "ppr"];
     let mut e2w = csv::Writer::from_path(format!("{out}/summary_e2.csv"))?;
     e2w.write_record([
         "topology",
         "fault",
         "n",
         "argmax_top1_pct",
+        "baro_top1_pct",
+        "random_walk_top1_pct",
         "ppr_top1_pct",
         "ppr_minus_argmax_pct",
+        "ppr_minus_baro_pct",
+        "ppr_minus_random_walk_pct",
     ])?;
     let mut topos: Vec<String> = e2.iter().map(|r| r.topology.clone()).collect();
     topos.sort();
@@ -451,63 +516,69 @@ fn main() -> Result<()> {
     let mut faults: Vec<String> = e2.iter().map(|r| r.fault.clone()).collect();
     faults.sort();
     faults.dedup();
-    // paired PPR-argmax differences pooled for the headline contrast C5
+    // Pooled paired PPR-minus-baseline differences for the headline contrasts.
     let mut ppr_minus_argmax: Vec<f64> = Vec::new();
+    let mut ppr_minus_baro: Vec<f64> = Vec::new();
+    let mut ppr_minus_rw: Vec<f64> = Vec::new();
     for tp in &topos {
         for ft in &faults {
-            // pair by (seed, culprit): one argmax and one ppr run
-            let mut amap: BTreeMap<(u64, String), bool> = BTreeMap::new();
-            let mut pmap: BTreeMap<(u64, String), bool> = BTreeMap::new();
+            // One map of (seed, culprit) -> top-1 hit per ranker.
+            let mut maps: Vec<BTreeMap<(u64, String), bool>> =
+                vec![BTreeMap::new(); RANKERS.len()];
             for r in e2.iter().filter(|r| &r.topology == tp && &r.fault == ft) {
-                let key = (r.seed, r.culprit.clone());
-                let hit = r.final_rank == 1;
-                if r.ranker == "argmax" {
-                    amap.insert(key, hit);
-                } else {
-                    pmap.insert(key, hit);
+                if let Some(ri) = RANKERS.iter().position(|&n| n == r.ranker) {
+                    maps[ri].insert((r.seed, r.culprit.clone()), r.final_rank == 1);
                 }
             }
-            let mut a_hits = 0usize;
-            let mut p_hits = 0usize;
-            let mut n = 0usize;
-            for (k, &ah) in &amap {
-                if let Some(&ph) = pmap.get(k) {
-                    n += 1;
-                    if ah {
-                        a_hits += 1;
-                    }
-                    if ph {
-                        p_hits += 1;
-                    }
-                    ppr_minus_argmax.push((ph as i32 - ah as i32) as f64);
-                }
-            }
+            // Keys present for every ranker (fully paired).
+            let keys: Vec<(u64, String)> = maps[0]
+                .keys()
+                .filter(|k| maps.iter().all(|m| m.contains_key(*k)))
+                .cloned()
+                .collect();
+            let n = keys.len();
             if n == 0 {
                 continue;
             }
-            let ap = pct(a_hits as f64 / n as f64);
-            let pp = pct(p_hits as f64 / n as f64);
+            let mut hits = vec![0usize; RANKERS.len()];
+            for k in &keys {
+                for (ri, m) in maps.iter().enumerate() {
+                    if m[k] {
+                        hits[ri] += 1;
+                    }
+                }
+                let ph = maps[3][k] as i32; // ppr
+                ppr_minus_argmax.push((ph - maps[0][k] as i32) as f64);
+                ppr_minus_baro.push((ph - maps[1][k] as i32) as f64);
+                ppr_minus_rw.push((ph - maps[2][k] as i32) as f64);
+            }
+            let p = |h: usize| pct(h as f64 / n as f64);
             e2w.write_record([
                 tp.clone(),
                 ft.clone(),
                 n.to_string(),
-                format!("{ap:.1}"),
-                format!("{pp:.1}"),
-                format!("{:.1}", pp - ap),
+                format!("{:.1}", p(hits[0])),
+                format!("{:.1}", p(hits[1])),
+                format!("{:.1}", p(hits[2])),
+                format!("{:.1}", p(hits[3])),
+                format!("{:.1}", p(hits[3]) - p(hits[0])),
+                format!("{:.1}", p(hits[3]) - p(hits[1])),
+                format!("{:.1}", p(hits[3]) - p(hits[2])),
             ])?;
         }
     }
     e2w.flush()?;
-    let (c5_diff, c5_lo, c5_hi) =
-        bootstrap_ci(&ppr_minus_argmax, mean, N_BOOT, 0.025, BOOT_SEED + 2);
-    // p-value for C5 via the bootstrap (two-sided).
-    let c5_p = {
-        let mut rng = XorShift64::new(BOOT_SEED + 3);
+    // Two-sided bootstrap p-value for a pooled mean paired difference.
+    let diff_p = |d: &[f64], seed: u64| -> f64 {
+        if d.is_empty() {
+            return 1.0;
+        }
+        let mut rng = XorShift64::new(seed);
         let mut below = 0usize;
-        let mut s = vec![0.0; ppr_minus_argmax.len()];
+        let mut s = vec![0.0; d.len()];
         for _ in 0..N_BOOT {
             for x in s.iter_mut() {
-                *x = ppr_minus_argmax[rng.below(ppr_minus_argmax.len())];
+                *x = d[rng.below(d.len())];
             }
             if mean(&s) <= 0.0 {
                 below += 1;
@@ -516,9 +587,19 @@ fn main() -> Result<()> {
         let f = below as f64 / N_BOOT as f64;
         2.0 * f.min(1.0 - f)
     };
+    let (c5_diff, c5_lo, c5_hi) =
+        bootstrap_ci(&ppr_minus_argmax, mean, N_BOOT, 0.025, BOOT_SEED + 2);
+    let c5_p = diff_p(&ppr_minus_argmax, BOOT_SEED + 3);
+    let (baro_diff, baro_lo, baro_hi) =
+        bootstrap_ci(&ppr_minus_baro, mean, N_BOOT, 0.025, BOOT_SEED + 4);
+    let baro_p = diff_p(&ppr_minus_baro, BOOT_SEED + 5);
+    let (rw_diff, rw_lo, rw_hi) =
+        bootstrap_ci(&ppr_minus_rw, mean, N_BOOT, 0.025, BOOT_SEED + 6);
+    let rw_p = diff_p(&ppr_minus_rw, BOOT_SEED + 7);
 
-    // ---- Holm over the difference-test family (C1, C4, C5) -------------------
-    let fam = [sf_sp, lr_p, c5_p];
+    // ---- Holm over the difference-test family -------------------------------
+    // C1 (sf slope), C4 (log-rank), and the three PPR-vs-baseline ranker contrasts.
+    let fam = [sf_sp, lr_p, c5_p, baro_p, rw_p];
     let holm_adj = holm(&fam, 0.05);
 
     // ---- E4 telemetry cost: mean cross KB per (placement, services, rate) ----
@@ -550,6 +631,64 @@ fn main() -> Result<()> {
         ])?;
     }
     e4w.flush()?;
+
+    // ---- E5 network realism: success, median/P95 TtD, false alarms per cell --
+    // One row per (impairment condition, level): how the central store-and-forward
+    // placement's localization degrades as the link gets worse.
+    if !e5.is_empty() {
+        let mut e5w = csv::Writer::from_path(format!("{out}/summary_e5.csv"))?;
+        e5w.write_record([
+            "condition",
+            "level",
+            "n",
+            "success_pct",
+            "success_lo",
+            "success_hi",
+            "median_ttd_steps",
+            "p95_ttd_steps",
+            "top1_pct",
+            "false_alarm_pct",
+            "mean_cross_kb",
+        ])?;
+        let mut keys: Vec<(String, String)> = e5
+            .iter()
+            .map(|r| (r.condition.clone(), format!("{:.3}", r.level)))
+            .collect();
+        keys.sort();
+        keys.dedup();
+        for (cond, lvl) in &keys {
+            let grp: Vec<&E5Raw> = e5
+                .iter()
+                .filter(|r| &r.condition == cond && format!("{:.3}", r.level) == *lvl)
+                .collect();
+            let n = grp.len();
+            if n == 0 {
+                continue;
+            }
+            let diag = grp.iter().filter(|r| r.diagnosed).count();
+            let top1 = grp.iter().filter(|r| r.final_rank == 1).count();
+            let fa = grp.iter().filter(|r| r.false_alarm).count();
+            let (sp, slo, shi) = wilson_interval(diag, n, Z);
+            let cens: Vec<Censored> = grp.iter().map(|r| e5_censored(r)).collect();
+            let (_c, med) = kaplan_meier(&cens);
+            let p95 = km_quantile(&cens, 0.95).unwrap_or(f64::NAN);
+            let kb = grp.iter().map(|r| r.cross_bytes as f64).sum::<f64>() / n as f64 / 1024.0;
+            e5w.write_record([
+                cond.clone(),
+                lvl.clone(),
+                n.to_string(),
+                format!("{:.1}", pct(sp)),
+                format!("{:.1}", pct(slo)),
+                format!("{:.1}", pct(shi)),
+                fmt_opt(med),
+                fmt_opt(p95),
+                format!("{:.1}", pct(top1 as f64 / n as f64)),
+                format!("{:.1}", pct(fa as f64 / n as f64)),
+                format!("{kb:.2}"),
+            ])?;
+        }
+        e5w.flush()?;
+    }
 
     // ---- E7 scale: median TtD + success + bytes per (placement, services) ----
     let mut e7w = csv::Writer::from_path(format!("{out}/summary_e7.csv"))?;
@@ -843,10 +982,29 @@ fn main() -> Result<()> {
          (95% CI {:.3}..{:.3}), p={:.4}\n",
         c5_diff, c5_lo, c5_hi, c5_p
     ));
-    stats.push_str("\nHolm correction over the difference-test family (C1, C4, C5):\n");
-    for (i, (name, p)) in [("C1", sf_sp), ("C4", lr_p), ("C5", c5_p)]
-        .iter()
-        .enumerate()
+    stats.push_str(&format!(
+        "C5b PPR minus BARO top-1 (pooled, paired): {:.3} \
+         (95% CI {:.3}..{:.3}), p={:.4}\n",
+        baro_diff, baro_lo, baro_hi, baro_p
+    ));
+    stats.push_str(&format!(
+        "C5c PPR minus random-walk top-1 (pooled, paired): {:.3} \
+         (95% CI {:.3}..{:.3}), p={:.4}\n",
+        rw_diff, rw_lo, rw_hi, rw_p
+    ));
+    stats.push_str(
+        "\nHolm correction over the difference-test family (C1, C4, C5 argmax, C5 BARO, \
+         C5 random-walk):\n",
+    );
+    for (i, (name, p)) in [
+        ("C1", sf_sp),
+        ("C4", lr_p),
+        ("C5 argmax", c5_p),
+        ("C5 BARO", baro_p),
+        ("C5 random-walk", rw_p),
+    ]
+    .iter()
+    .enumerate()
     {
         stats.push_str(&format!(
             "  {name}: raw p={:.4}, Holm-adjusted p={:.4}, reject at 0.05: {}\n",
@@ -858,6 +1016,28 @@ fn main() -> Result<()> {
          hybrid {:.0}; central-sf/edge-local = {:.1}x, central-sf/hybrid = {:.0}x\n",
         sf_bytes, el_bytes, hy_bytes, ratio_el, ratio_hy
     ));
+    if !e5.is_empty() {
+        let succ = |cond: &str, lvl: f64| -> f64 {
+            let g: Vec<&E5Raw> = e5
+                .iter()
+                .filter(|r| r.condition == cond && (r.level - lvl).abs() < 1e-6)
+                .collect();
+            if g.is_empty() {
+                f64::NAN
+            } else {
+                100.0 * g.iter().filter(|r| r.diagnosed).count() as f64 / g.len() as f64
+            }
+        };
+        stats.push_str(&format!(
+            "\nE5 network realism (central store-and-forward) localization success: \
+             10% loss {:.0}%, 10-step jitter {:.0}%, 1 s clock skew {:.0}%, \
+             simultaneous second fault {:.0}% (full sweep in summary_e5.csv).\n",
+            succ("loss", 0.10),
+            succ("jitter", 10.0),
+            succ("clock_skew", 10.0),
+            succ("double_fault", 1.0)
+        ));
+    }
     fs::write(format!("{out}/stats.txt"), &stats)?;
 
     // ---- numbers.tex ---------------------------------------------------------
@@ -877,6 +1057,10 @@ fn main() -> Result<()> {
     numbers.push_str(&m("logrankP", fmt_p(lr_p)));
     numbers.push_str(&m("pprMinusArgmax", format!("{:.1}", pct(c5_diff))));
     numbers.push_str(&m("pprArgmaxP", fmt_p(c5_p)));
+    numbers.push_str(&m("pprMinusBaro", format!("{:.1}", pct(baro_diff))));
+    numbers.push_str(&m("pprBaroP", fmt_p(baro_p)));
+    numbers.push_str(&m("pprMinusRandomWalk", format!("{:.1}", pct(rw_diff))));
+    numbers.push_str(&m("pprRandomWalkP", fmt_p(rw_p)));
     numbers.push_str(&m("bytesRatioEdge", format!("{ratio_el:.1}")));
     numbers.push_str(&m("bytesRatioHybrid", format!("{ratio_hy:.0}")));
     fs::write(format!("{out}/numbers.tex"), &numbers)?;

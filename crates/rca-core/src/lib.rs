@@ -38,6 +38,11 @@ pub struct RcaConfig {
     pub self_weight: f64,
     /// Numerical epsilon.
     pub eps: f64,
+    /// Robust-deviation threshold the BARO baseline uses to decide which services
+    /// have actually changed; only services at or above it are ranked by that
+    /// method, falling back to all anomalous services when none cross it. Matches
+    /// the detector's default `h` so BARO sees the same change set.
+    pub detect_h: f64,
 }
 
 impl Default for RcaConfig {
@@ -47,6 +52,7 @@ impl Default for RcaConfig {
             iters: 100,
             self_weight: 1.0,
             eps: 1e-6,
+            detect_h: 4.0,
         }
     }
 }
@@ -139,6 +145,76 @@ pub fn localize(
     ranked
 }
 
+/// Random-walk-with-restart localization over the call graph, used as a non-AI
+/// graph baseline (the MicroRCA / MonitorRank / RCD / CIRCA family in the survey).
+///
+/// Unlike [`localize`], which follows **forward** edges only and settles on the
+/// deepest anomalous service, this walker moves over the **undirected** graph:
+/// from a service it can step to any caller or callee, biased toward the more
+/// anomalous neighbour, and it restarts into the anomaly distribution. Walking in
+/// both directions is the classic symptom-to-cause random walk, so it ranks a
+/// shared or amplifying neighbour differently from the forward PPR walk, which is
+/// exactly the comparison the ablation needs.
+pub fn random_walk_localize(
+    graph: &CallGraph,
+    anomaly: &[f64],
+    visible: &[bool],
+    cfg: &RcaConfig,
+) -> Vec<RankedCause> {
+    let n = graph.n;
+    let mut a = vec![0.0_f64; n];
+    for i in 0..n {
+        if visible[i] {
+            a[i] = anomaly[i].max(0.0);
+        }
+    }
+    let total: f64 = a.iter().sum();
+    if total <= 0.0 {
+        return Vec::new();
+    }
+    let personalization: Vec<f64> = a.iter().map(|x| x / total).collect();
+
+    let mut trans: Vec<Vec<(usize, f64)>> = vec![Vec::new(); n];
+    for i in 0..n {
+        if !visible[i] {
+            continue;
+        }
+        let mut outs: Vec<(usize, f64)> = Vec::new();
+        // Both directions: callees (out) and callers (incoming).
+        for &(j, w) in graph.out[i].iter().chain(graph.incoming[i].iter()) {
+            if visible[j] {
+                let wt = w * (a[j] + cfg.eps);
+                if wt > 0.0 {
+                    outs.push((j, wt));
+                }
+            }
+        }
+        outs.push((i, cfg.self_weight * (a[i] + cfg.eps)));
+        let s: f64 = outs.iter().map(|x| x.1).sum();
+        if s > 0.0 {
+            for o in outs.iter_mut() {
+                o.1 /= s;
+            }
+        }
+        trans[i] = outs;
+    }
+
+    let rank = ppr::personalized_pagerank(n, &trans, &personalization, cfg.alpha, cfg.iters);
+    let mut ranked: Vec<RankedCause> = (0..n)
+        .filter(|&i| visible[i])
+        .map(|i| RankedCause {
+            service: i,
+            score: rank[i],
+        })
+        .collect();
+    ranked.sort_by(|x, y| {
+        y.score
+            .partial_cmp(&x.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked
+}
+
 /// Convenience: the 1-based rank of `culprit` in a ranking (1 = top-1). Returns
 /// `None` if the culprit is absent (e.g., its telemetry has not been received).
 pub fn rank_of(ranked: &[RankedCause], culprit: usize) -> Option<usize> {
@@ -148,13 +224,27 @@ pub fn rank_of(ranked: &[RankedCause], culprit: usize) -> Option<usize> {
         .map(|p| p + 1)
 }
 
-/// The two rankers compared in the ablation (hypothesis H4).
+/// The rankers compared in the ablation (hypothesis H4). `Argmax` and `Ppr` are
+/// our ablation pair (does the graph help?); `Baro` and `RandomWalk` are the two
+/// non-AI literature baselines the review asks us to beat.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Ranker {
     /// Plain argmax of the robust anomaly score over the observed services. No
     /// graph is used, so a caller whose anomaly is amplified by retries can
     /// outscore the true culprit.
     Argmax,
+    /// BARO (Pham et al.): rank by robust-deviation magnitude, restricted to the
+    /// services whose deviation crossed the detector threshold (`cfg.detect_h`),
+    /// which is the change set BARO's detector would hand its RobustScorer. Its
+    /// localization step is argmax of the robust score, so once every anomalous
+    /// service is well above threshold it coincides with `Argmax`; the two can
+    /// differ early, while some services are still sub-threshold. No graph.
+    Baro,
+    /// A random-walk-with-restart over the undirected call graph
+    /// ([`random_walk_localize`]), standing for the MicroRCA / MonitorRank / RCD /
+    /// CIRCA graph-causal family. Walks toward callers and callees alike, so it is
+    /// a genuine graph competitor that differs from the forward-only PPR walk.
+    RandomWalk,
     /// Personalized PageRank over the call graph ([`localize`]), which follows
     /// the dependency structure toward the deepest anomalous service.
     Ppr,
@@ -173,22 +263,38 @@ pub fn rank_causes(
 ) -> Vec<RankedCause> {
     match ranker {
         Ranker::Ppr => localize(graph, anomaly, observed, cfg),
-        Ranker::Argmax => {
-            let mut ranked: Vec<RankedCause> = (0..graph.n)
-                .filter(|&i| observed[i] && anomaly[i].max(0.0) > 0.0)
-                .map(|i| RankedCause {
-                    service: i,
-                    score: anomaly[i],
-                })
-                .collect();
-            ranked.sort_by(|x, y| {
-                y.score
-                    .partial_cmp(&x.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-            ranked
+        Ranker::RandomWalk => random_walk_localize(graph, anomaly, observed, cfg),
+        Ranker::Argmax => argmax_rank(graph.n, anomaly, observed, 0.0),
+        // BARO ranks only the services whose robust deviation crossed the detector
+        // threshold; if none have (very early, or a weak fault), fall back to all
+        // anomalous services so a ranking still exists.
+        Ranker::Baro => {
+            let r = argmax_rank(graph.n, anomaly, observed, cfg.detect_h);
+            if r.is_empty() {
+                argmax_rank(graph.n, anomaly, observed, 0.0)
+            } else {
+                r
+            }
         }
     }
+}
+
+/// Rank observed services with anomaly strictly above `floor` by descending
+/// anomaly. Shared by the `Argmax` (floor 0) and `Baro` (floor = threshold) paths.
+fn argmax_rank(n: usize, anomaly: &[f64], observed: &[bool], floor: f64) -> Vec<RankedCause> {
+    let mut ranked: Vec<RankedCause> = (0..n)
+        .filter(|&i| observed[i] && anomaly[i].max(0.0) > floor)
+        .map(|i| RankedCause {
+            service: i,
+            score: anomaly[i],
+        })
+        .collect();
+    ranked.sort_by(|x, y| {
+        y.score
+            .partial_cmp(&x.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    ranked
 }
 
 #[cfg(test)]
@@ -228,6 +334,46 @@ mod tests {
                 ranked
             );
         }
+    }
+
+    #[test]
+    fn ppr_beats_statistical_baselines_on_retry_amplification() {
+        // Culprit is the deepest service (2), but its immediate caller (1) is MORE
+        // anomalous because retries amplified it. The graph-blind methods pick the
+        // caller; the forward PPR walk still settles on the deepest anomalous node.
+        let g = chain();
+        let cfg = RcaConfig::default();
+        let vis = vec![true, true, true];
+        let anomaly = vec![0.0, 10.0, 5.0]; // caller 1 > culprit 2 > gateway 0
+        let culprit = 2;
+
+        let argmax = rank_causes(&g, &anomaly, &vis, &cfg, Ranker::Argmax);
+        let baro = rank_causes(&g, &anomaly, &vis, &cfg, Ranker::Baro);
+        let ppr = rank_causes(&g, &anomaly, &vis, &cfg, Ranker::Ppr);
+
+        assert_eq!(argmax[0].service, 1, "argmax picks the amplified caller");
+        assert_eq!(baro[0].service, 1, "BARO also picks the amplified caller");
+        assert_eq!(
+            ppr[0].service, culprit,
+            "PPR recovers the true deepest culprit, got {ppr:?}"
+        );
+    }
+
+    #[test]
+    fn random_walk_is_a_distinct_graph_method() {
+        // The undirected random walk and the forward PPR walk must not be the same
+        // function: on an amplified-caller profile they disagree on the top-1.
+        let g = chain();
+        let cfg = RcaConfig::default();
+        let vis = vec![true, true, true];
+        let anomaly = vec![0.0, 10.0, 5.0];
+        let rw = rank_causes(&g, &anomaly, &vis, &cfg, Ranker::RandomWalk);
+        let ppr = rank_causes(&g, &anomaly, &vis, &cfg, Ranker::Ppr);
+        assert!(!rw.is_empty() && !ppr.is_empty());
+        assert_ne!(
+            rw[0].service, ppr[0].service,
+            "random walk should rank differently from PPR here (rw={rw:?}, ppr={ppr:?})"
+        );
     }
 
     #[test]
