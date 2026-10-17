@@ -24,7 +24,7 @@ CRANE_URL="${CRANE_URL:?set CRANE_URL=http://sovloc-xxxx.cranecloud.io}"; CRANE_
 SCENARIO="${SCENARIO:-scenarios/five-edge-100.yaml}"
 PLATFORM="${PLATFORM:-cranecloud}"
 EVENTS="${EVENTS:-30}"
-PERIOD_MS="${PERIOD_MS:-500}"      # 100 services x (1000/PERIOD_MS) POST/s to Crane
+PERIOD_MS="${PERIOD_MS:-200}"      # same report rate as the other tiers; the free tier sustains 100 services at 200 ms
 STALE_MS="${STALE_MS:-3000}"
 UPLINK="${UPLINK:-wlp4s0}"         # host interface with Internet to Crane
 SRCNET="${SRCNET:-10.30.0}"        # per-device source IPs SRCNET.<k>
