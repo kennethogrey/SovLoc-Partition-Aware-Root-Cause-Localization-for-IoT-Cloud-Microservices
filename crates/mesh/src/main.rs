@@ -404,6 +404,62 @@ struct Ctx {
     viz: AtomicU64,
     top: Mutex<Option<usize>>,
     loc_ms: AtomicU64,
+    // Measured footprint (E4), exposed on GET /status so a production harness
+    // records real numbers instead of modelled ones: cumulative telemetry bytes
+    // this collector has received on the wire, and a bounded ring of recent
+    // per-sample ingest-handler latencies (microseconds) for a P99.
+    bytes_in: AtomicU64,
+    handler_us: Mutex<std::collections::VecDeque<u32>>,
+}
+
+/// Record one ingest for the footprint counters: the raw bytes that crossed and
+/// the handler latency (microseconds), kept in a bounded ring for a P99.
+fn record_footprint(ctx: &Ctx, raw_bytes: usize, handler_us: u32) {
+    ctx.bytes_in.fetch_add(raw_bytes as u64, Ordering::Relaxed);
+    let mut h = ctx.handler_us.lock().unwrap();
+    h.push_back(handler_us);
+    while h.len() > 4096 {
+        h.pop_front();
+    }
+}
+
+/// P99 of the recent ingest-handler latencies (microseconds), or 0 if none yet.
+fn handler_p99_us(ctx: &Ctx) -> u32 {
+    let h = ctx.handler_us.lock().unwrap();
+    if h.is_empty() {
+        return 0;
+    }
+    let mut v: Vec<u32> = h.iter().copied().collect();
+    v.sort_unstable();
+    v[((v.len() as f64 * 0.99) as usize).min(v.len() - 1)]
+}
+
+/// This process's resident set size in kilobytes, from /proc/self/statm (0 if
+/// unreadable, e.g. off Linux). statm field 2 is resident pages.
+fn self_rss_kb() -> u64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|s| s.split_whitespace().nth(1).map(|x| x.to_string()))
+        .and_then(|p| p.parse::<u64>().ok())
+        .map(|pages| pages * 4) // 4 KiB pages
+        .unwrap_or(0)
+}
+
+/// This process's cumulative CPU time in milliseconds (utime + stime), from
+/// /proc/self/stat (0 if unreadable). A harness differences it across an event.
+fn self_cpu_ms() -> u64 {
+    let hz = 100u64; // USER_HZ is 100 on all mainstream Linux kernels
+    std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|s| {
+            // Fields after the (comm) blob: utime is 14, stime is 15 (1-based).
+            let rest = s.rsplit_once(')').map(|(_, r)| r.to_string())?;
+            let f: Vec<&str> = rest.split_whitespace().collect();
+            let utime = f.get(11)?.parse::<u64>().ok()?;
+            let stime = f.get(12)?.parse::<u64>().ok()?;
+            Some((utime + stime) * 1000 / hz)
+        })
+        .unwrap_or(0)
 }
 
 async fn run_collector(a: CollectorArgs) -> Result<()> {
@@ -439,6 +495,8 @@ async fn run_collector(a: CollectorArgs) -> Result<()> {
         viz: AtomicU64::new(0),
         top: Mutex::new(None),
         loc_ms: AtomicU64::new(0),
+        bytes_in: AtomicU64::new(0),
+        handler_us: Mutex::new(std::collections::VecDeque::new()),
     });
 
     match init_expect {
@@ -622,7 +680,10 @@ async fn handle_conn(stream: TcpStream, ctx: Arc<Ctx>) -> Result<()> {
             Ok(m) => m,
             Err(_) => continue,
         };
+        let raw = line.len() + 1; // the JSON line plus its newline framing byte
+        let t0 = std::time::Instant::now();
         ingest_metric(&ctx, &m);
+        record_footprint(&ctx, raw, t0.elapsed().as_micros() as u32);
     }
     Ok(())
 }
@@ -698,9 +759,18 @@ fn status_json(ctx: &Ctx) -> String {
         "null".to_string()
     };
     let t_rel = (now_ms().saturating_sub(ctx.start_ms)) as f64 / 1000.0;
+    // Measured footprint (E4): real bytes received, ingest-handler P99, and this
+    // process's resident memory and cumulative CPU, so a harness records measured
+    // numbers rather than modelled ones.
+    let bytes_in = ctx.bytes_in.load(Ordering::Relaxed);
+    let p99_us = handler_p99_us(ctx);
+    let rss_kb = self_rss_kb();
+    let cpu_ms = self_cpu_ms();
     format!(
-        "{{\"name\":\"{}\",\"visible\":{},\"n\":{},\"top1\":{},\"expect\":{},\"localized_ms\":{},\"t_rel_s\":{:.1}}}\n",
-        ctx.name, visible, ctx.graph.n, top1, expect, localized_ms, t_rel
+        "{{\"name\":\"{}\",\"visible\":{},\"n\":{},\"top1\":{},\"expect\":{},\"localized_ms\":{},\
+         \"t_rel_s\":{:.1},\"bytes_in\":{},\"p99_handler_us\":{},\"rss_kb\":{},\"cpu_ms\":{}}}\n",
+        ctx.name, visible, ctx.graph.n, top1, expect, localized_ms, t_rel, bytes_in, p99_us,
+        rss_kb, cpu_ms
     )
 }
 
@@ -743,7 +813,10 @@ fn spawn_http_ingress(ctx: Arc<Ctx>, port: u16) {
                         }
                         ("POST", "/telemetry") => {
                             if let Ok(m) = serde_json::from_slice::<Metric>(&req.body) {
+                                let raw = req.body.len();
+                                let t0 = std::time::Instant::now();
                                 ingest_metric(&ctx, &m);
+                                record_footprint(&ctx, raw, t0.elapsed().as_micros() as u32);
                                 http1::write_response(&mut stream, "204 No Content", "").await;
                             } else {
                                 http1::write_response(

@@ -67,6 +67,7 @@ for path in "$@"; do
       side=val("culprit_side"); el=val("edge_localized"); ett=val("edge_ttd_ms");
       cbl=val("cloud_localized_during_cut"); cmv=val("cloud_min_visible");
       ns=val("n_services"); cb=val("cross_bytes");
+      cpu=val("cpu_ms"); rss=val("rss_kb"); p99=val("p99_handler_us");
       if(ns!=""){ nserv=ns+0 }
       if(side=="edge")ec++; else cc++;
       if(el==1)elloc++;
@@ -74,6 +75,9 @@ for path in "$@"; do
       if(side=="edge" && ett!="NA" && ett!=""){ ttd[++nt]=ett+0 }
       if(cmv!="NA" && cmv!=""){ mv[++nm]=cmv+0 }
       if(cb!="" && cb!="NA"){ by[++nb]=cb+0 }
+      if(cpu!="" && cpu!="NA"){ cpuA[++ncpu]=cpu+0 }
+      if(rss!="" && rss!="NA"){ rssA[++nrss]=rss+0 }
+      if(p99!="" && p99!="NA"){ p99A[++np99]=p99+0 }
     }
     END {
       ntot=(nserv? nserv : 7)
@@ -94,13 +98,17 @@ for path in "$@"; do
         printf "  +/-20%% median:                     prod %.0f vs sim %.0f, ratio %.2f -> %s\n", pm, sim_ms, rm, (rm>=0.8&&rm<=1.2?"within":"OUTSIDE (scope the claim: real tick granularity differs)")
         printf "  +/-20%% P95 (tail vs sim tail):     prod %.0f vs sim %.0f, ratio %.2f -> %s\n", pp, sim_p95_ms, rp, (rp>=0.8&&rp<=1.2?"within":(rp<0.8?"within (faster than sim tail)":"OUTSIDE (scope the claim)"))
       }
+      # Measured footprint of the cloud (central) collector, per event, read off its
+      # /status counters (E4). These are measured, not modelled: the sim per-sample
+      # wire size (SAMPLE_BYTES) is itself measured from the same JSON record.
       if(nb>0){
-        pb=med(by,nb); skb=sim_kb*1024;
-        rb=(skb>0? pb/skb : 0);
-        printf "  bytes crossing per event (median): prod %.0f B vs sim %.0f B, ratio %.2f -> %s\n", pb, skb, rb, (rb>=0.8&&rb<=1.2?"within":"OUTSIDE")
+        printf "  cloud bytes received per event:     median %.0f B (measured on the wire)\n", med(by,nb)
       } else {
         print "  bytes crossing: not measured on this tier (disclosed, not inferred)."
       }
+      if(ncpu>0){ printf "  cloud CPU per event:               median %.0f ms\n", med(cpuA,ncpu) }
+      if(nrss>0){ printf "  cloud collector resident memory:   median %.1f MB\n", med(rssA,nrss)/1024.0 }
+      if(np99>0){ printf "  cloud ingest-handler latency P99:  median %.0f us\n", med(p99A,np99) }
       print ""
     }' "$path"
 done

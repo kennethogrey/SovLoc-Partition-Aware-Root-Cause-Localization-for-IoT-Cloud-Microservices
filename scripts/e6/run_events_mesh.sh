@@ -100,7 +100,7 @@ inject() { docker compose -f "$COMPOSE_FILE" exec -T sovloc-control \
 
 OUT="results/production/${PLATFORM}.csv"
 mkdir -p results/production
-echo "platform,event,culprit,culprit_side,device,partition_sec,edge_localized,edge_ttd_ms,cloud_localized_during_cut,cloud_min_visible,n_services" > "$OUT"
+echo "platform,event,culprit,culprit_side,device,partition_sec,edge_localized,edge_ttd_ms,cloud_localized_during_cut,cloud_min_visible,n_services,cross_bytes,cpu_ms,rss_kb,p99_handler_us" > "$OUT"
 
 echo "==> running $EVENTS events on $PLATFORM" >&2
 for ev in $(seq 1 "$EVENTS"); do
@@ -110,6 +110,11 @@ for ev in $(seq 1 "$EVENTS"); do
   echo "  event $ev/$EVENTS culprit=$culprit ($side, device=$dev, cut=${psec}s)" >&2
 
   edge_ttd=""; cloud_minvis=""; cloud_loc=0
+  # Measured footprint of the cloud (central) collector: snapshot its received
+  # bytes and CPU before the event, difference them after, so cross_bytes and
+  # cpu_ms are the real cost of this event, not a model constant (E4).
+  bytes0="$(status_field "$CLOUD_HTTP" bytes_in)"; [ -n "$bytes0" ] || bytes0=0
+  cpu0="$(status_field "$CLOUD_HTTP" cpu_ms)"; [ -n "$cpu0" ] || cpu0=0
 
   if [ "$side" = "edge" ]; then
     ehp="${DEV_HTTP[$dev]}"
@@ -152,7 +157,14 @@ for ev in $(seq 1 "$EVENTS"); do
   fi
 
   edge_loc=$([ -n "$edge_ttd" ] && echo 1 || echo 0)
-  echo "${PLATFORM},${ev},${culprit},${side},${dev},${psec},${edge_loc},${edge_ttd:-NA},${cloud_loc},${cloud_minvis:-NA},${N_SVC}" >> "$OUT"
+  # Read the cloud collector's end-of-event footprint and difference the counters.
+  bytes1="$(status_field "$CLOUD_HTTP" bytes_in)"; [ -n "$bytes1" ] || bytes1="$bytes0"
+  cpu1="$(status_field "$CLOUD_HTTP" cpu_ms)"; [ -n "$cpu1" ] || cpu1="$cpu0"
+  rss="$(status_field "$CLOUD_HTTP" rss_kb)"; [ -n "$rss" ] || rss=NA
+  p99="$(status_field "$CLOUD_HTTP" p99_handler_us)"; [ -n "$p99" ] || p99=NA
+  cross_bytes=$(( bytes1 - bytes0 )); [ "$cross_bytes" -ge 0 ] 2>/dev/null || cross_bytes=NA
+  cpu_ms=$(( cpu1 - cpu0 )); [ "$cpu_ms" -ge 0 ] 2>/dev/null || cpu_ms=NA
+  echo "${PLATFORM},${ev},${culprit},${side},${dev},${psec},${edge_loc},${edge_ttd:-NA},${cloud_loc},${cloud_minvis:-NA},${N_SVC},${cross_bytes},${cpu_ms},${rss},${p99}" >> "$OUT"
 
   inject none      # clear the fault
   sleep "$SETTLE"  # let the faulted service settle before the next event
