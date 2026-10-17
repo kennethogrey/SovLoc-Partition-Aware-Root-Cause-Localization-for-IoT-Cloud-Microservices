@@ -13,7 +13,29 @@
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
+
+/// Connect to `host:port`, optionally binding a local source IP first so the
+/// wide-area per-device cut can route each edge device out through its own address.
+async fn connect_from(host: &str, port: u16, bind: Option<&str>) -> std::io::Result<TcpStream> {
+    use std::net::{IpAddr, SocketAddr};
+    let dest: SocketAddr = tokio::net::lookup_host((host, port))
+        .await?
+        .next()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no address for host"))?;
+    let socket = if dest.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    if let Some(b) = bind {
+        let src: IpAddr = b.parse().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad --http-bind IP")
+        })?;
+        socket.bind(SocketAddr::new(src, 0))?;
+    }
+    socket.connect(dest).await
+}
 
 /// A parsed HTTP request: only the method, path, and body the collector needs.
 pub struct Req {
@@ -117,19 +139,22 @@ pub struct HttpSender {
     host: String,
     port: u16,
     base: String,
+    bind: Option<String>,
     conn: Option<TcpStream>,
 }
 
 impl HttpSender {
     /// Build a sender for a plain `http://host[:port][/base]` URL, or `None` if
     /// the URL is not plain http (an https URL needs TLS the platform terminates
-    /// at its ingress; point at the platform's http endpoint instead).
-    pub fn new(base_url: &str) -> Option<Self> {
+    /// at its ingress; point at the platform's http endpoint instead). `bind` is an
+    /// optional local source IP to connect from (the wide-area per-device cut).
+    pub fn new(base_url: &str, bind: Option<String>) -> Option<Self> {
         let (host, port, base) = parse_http_url(base_url)?;
         Some(Self {
             host,
             port,
             base,
+            bind,
             conn: None,
         })
     }
@@ -137,7 +162,7 @@ impl HttpSender {
     /// POST a JSON body to `<base><path>` over the reused connection.
     pub async fn post(&mut self, path: &str, body: &str) -> std::io::Result<()> {
         if self.conn.is_none() {
-            self.conn = Some(TcpStream::connect((self.host.as_str(), self.port)).await?);
+            self.conn = Some(connect_from(&self.host, self.port, self.bind.as_deref()).await?);
         }
         let target = format!("{}{}", self.base.trim_end_matches('/'), path);
         let req = format!(
@@ -177,6 +202,48 @@ pub fn parse_http_url(url: &str) -> Option<(String, u16, String)> {
         return None;
     }
     Some((host, port, base.to_string()))
+}
+
+/// GET a plain `http://host[:port]/path` URL and return the response body as a
+/// String. Used by `mesh status` so the E6 cluster harness can read a collector's
+/// `/status` from inside the cluster (via `kubectl exec`) without a curl or wget
+/// in the runtime image.
+pub async fn get_text(url: &str) -> std::io::Result<String> {
+    let (host, port, path) = parse_http_url(url).ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            format!("expected an http:// url, got: {url}"),
+        )
+    })?;
+    let mut stream = TcpStream::connect((host.as_str(), port)).await?;
+    let req = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
+    stream.write_all(req.as_bytes()).await?;
+    stream.flush().await?;
+
+    let mut reader = BufReader::new(&mut stream);
+    let mut status_line = String::new();
+    reader.read_line(&mut status_line).await?;
+    let mut content_length = 0usize;
+    loop {
+        let mut h = String::new();
+        if reader.read_line(&mut h).await? == 0 {
+            break;
+        }
+        let t = h.trim_end();
+        if t.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = t.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = value.trim().parse().unwrap_or(0);
+            }
+        }
+    }
+    let mut body = vec![0u8; content_length];
+    if content_length > 0 {
+        reader.read_exact(&mut body).await?;
+    }
+    Ok(String::from_utf8_lossy(&body).to_string())
 }
 
 /// POST a JSON body to `<base_url><path>` over plain HTTP/1.1, best effort.

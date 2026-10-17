@@ -1,0 +1,21 @@
+# Reduced multi-edge scenario for the OpenStack (Kolla-Ansible) E6 tier. The full
+# five-edge-100 mesh (~110 VMs/pods) does not fit on a single-host all-in-one
+# OpenStack on a 14 GiB laptop, so this is the disclosed honest-fallback: still
+# genuinely multi-edge (two edge devices, uneven sizes, distinct partition times),
+# each device a separate VM, cut from the cloud VM by a real OpenStack security
+# group change. See RUNBOOK (OpenStack tier) for why it is reduced.
+name: openstack-2edge
+reps: 5
+seed: 42
+loss: 0.0
+fault_at_sec: 3.0
+horizon_sec: 40.0
+
+number_of_edge_devices: 2
+total_microservices: 11
+
+cloud_services: [enrich, store, alerting]
+
+edge_devices:
+  - { id: edge-1, service_count: 6, partition_time: 10 }
+  - { id: edge-2, service_count: 5, partition_time: 30 }

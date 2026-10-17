@@ -123,6 +123,68 @@ enum Cmd {
     /// with its own collector and partition time), ready for `docker compose up`
     /// or a Crane Cloud deployment.
     GenCompose(GenComposeArgs),
+    /// Generate Kubernetes manifests for the full multi-edge mesh (one Deployment
+    /// and Service per microservice, one edge collector per device, a cloud
+    /// collector, a control pod) plus a per-device cut NetworkPolicy, for the
+    /// cluster tiers (k3s / OpenStack / Crane Cloud). A real partition is a
+    /// `kubectl apply` of the device's cut policy.
+    GenK8s(GenK8sArgs),
+    /// Print the scenario's services as CSV (service,device,partition_sec,side),
+    /// which the E6 harness uses to pick culprits and their per-device cut length.
+    Describe(DescribeArgs),
+    /// GET a collector's /status URL and print the JSON body. Lets the E6 cluster
+    /// harness read a collector's live view from inside the cluster (kubectl exec)
+    /// without a curl/wget in the image.
+    Status(StatusArgs),
+}
+
+#[derive(Args)]
+struct DescribeArgs {
+    /// Scenario file (YAML).
+    #[arg(long)]
+    scenario: String,
+}
+
+#[derive(Args)]
+struct GenK8sArgs {
+    /// Scenario file (YAML).
+    #[arg(long)]
+    scenario: String,
+    /// Output directory for mesh.yaml and the per-device cut-*.yaml policies.
+    #[arg(long, default_value = "deploy/k8s/generated")]
+    out_dir: String,
+    /// Kubernetes namespace.
+    #[arg(long, default_value = "sovloc")]
+    namespace: String,
+    /// Container image for every pod (must carry the mesh binary).
+    #[arg(long, default_value = "sovloc-mesh:local")]
+    image: String,
+    /// imagePullPolicy (e.g. Never for a locally imported image, IfNotPresent for a registry).
+    #[arg(long, default_value = "IfNotPresent")]
+    image_pull_policy: String,
+    /// Directory the scenario ConfigMap is mounted at; the file is <dir>/scenario.yaml.
+    #[arg(long, default_value = "/etc/sovloc")]
+    mount_dir: String,
+    /// Cloud collector telemetry port.
+    #[arg(long, default_value_t = 7000)]
+    cloud_port: u16,
+    /// First edge collector telemetry port; device k uses base + k.
+    #[arg(long, default_value_t = 7001)]
+    edge_base_port: u16,
+    /// Cloud collector HTTP /status port.
+    #[arg(long, default_value_t = 8080)]
+    cloud_http_port: u16,
+    /// First edge collector HTTP /status port; device k uses base + k.
+    #[arg(long, default_value_t = 8081)]
+    edge_http_base_port: u16,
+}
+
+#[derive(Args)]
+struct StatusArgs {
+    /// Full http:// URL of the collector's status endpoint, e.g.
+    /// `http://cloud:8080/status`.
+    #[arg(long)]
+    url: String,
 }
 
 #[derive(Args)]
@@ -197,9 +259,26 @@ struct ServiceArgs {
     /// edge collector, which is exactly the partition behaviour.
     #[arg(long)]
     http_cloud: Option<String>,
+    /// Optional local source IP to bind the `--http-cloud` connection to. Lets the
+    /// Crane Cloud (wide-area) tier route each edge device's telemetry out through
+    /// its own address, so a per-device partition can drop one device's traffic to
+    /// the cloud while the harness still reaches the cloud over the host's address.
+    #[arg(long)]
+    http_bind: Option<String>,
     /// Report period in ms.
     #[arg(long, default_value_t = 200)]
     period_ms: u64,
+    /// Reopen the CLOUD telemetry connection at least this often (ms). A real
+    /// network partition such as a k8s NetworkPolicy only blocks NEW connections,
+    /// so an already-established stream would keep the cloud fed and never go
+    /// blind; recycling the socket makes the cut take effect within this window
+    /// plus the collector staleness window. 0 (the default) keeps one persistent
+    /// connection, which is correct wherever the cut severs the socket itself
+    /// (the Docker tier's network disconnect); the k8s tier sets this to 1000 via
+    /// `gen-k8s` because a NetworkPolicy only blocks new connections. The edge
+    /// link is same-device and never recycled.
+    #[arg(long, default_value_t = 0)]
+    conn_recycle_ms: u64,
     /// RNG seed.
     #[arg(long, default_value_t = 7)]
     seed: u64,
@@ -265,6 +344,13 @@ struct GenComposeArgs {
     /// First edge collector telemetry port; device k listens on base + k.
     #[arg(long, default_value_t = 7001)]
     edge_base_port: u16,
+    /// Cloud collector HTTP status port, exposed to the host so the E6 harness can
+    /// poll GET /status without an in-container HTTP client.
+    #[arg(long, default_value_t = 8080)]
+    cloud_http_port: u16,
+    /// First edge collector HTTP status port; device k exposes base + k.
+    #[arg(long, default_value_t = 8081)]
+    edge_http_base_port: u16,
     /// Fault-injection time (and partition start), seconds after the shared clock.
     #[arg(long, default_value_t = 15.0)]
     fault_at_sec: f64,
@@ -318,6 +404,62 @@ struct Ctx {
     viz: AtomicU64,
     top: Mutex<Option<usize>>,
     loc_ms: AtomicU64,
+    // Measured footprint (E4), exposed on GET /status so a production harness
+    // records real numbers instead of modelled ones: cumulative telemetry bytes
+    // this collector has received on the wire, and a bounded ring of recent
+    // per-sample ingest-handler latencies (microseconds) for a P99.
+    bytes_in: AtomicU64,
+    handler_us: Mutex<std::collections::VecDeque<u32>>,
+}
+
+/// Record one ingest for the footprint counters: the raw bytes that crossed and
+/// the handler latency (microseconds), kept in a bounded ring for a P99.
+fn record_footprint(ctx: &Ctx, raw_bytes: usize, handler_us: u32) {
+    ctx.bytes_in.fetch_add(raw_bytes as u64, Ordering::Relaxed);
+    let mut h = ctx.handler_us.lock().unwrap();
+    h.push_back(handler_us);
+    while h.len() > 4096 {
+        h.pop_front();
+    }
+}
+
+/// P99 of the recent ingest-handler latencies (microseconds), or 0 if none yet.
+fn handler_p99_us(ctx: &Ctx) -> u32 {
+    let h = ctx.handler_us.lock().unwrap();
+    if h.is_empty() {
+        return 0;
+    }
+    let mut v: Vec<u32> = h.iter().copied().collect();
+    v.sort_unstable();
+    v[((v.len() as f64 * 0.99) as usize).min(v.len() - 1)]
+}
+
+/// This process's resident set size in kilobytes, from /proc/self/statm (0 if
+/// unreadable, e.g. off Linux). statm field 2 is resident pages.
+fn self_rss_kb() -> u64 {
+    std::fs::read_to_string("/proc/self/statm")
+        .ok()
+        .and_then(|s| s.split_whitespace().nth(1).map(|x| x.to_string()))
+        .and_then(|p| p.parse::<u64>().ok())
+        .map(|pages| pages * 4) // 4 KiB pages
+        .unwrap_or(0)
+}
+
+/// This process's cumulative CPU time in milliseconds (utime + stime), from
+/// /proc/self/stat (0 if unreadable). A harness differences it across an event.
+fn self_cpu_ms() -> u64 {
+    let hz = 100u64; // USER_HZ is 100 on all mainstream Linux kernels
+    std::fs::read_to_string("/proc/self/stat")
+        .ok()
+        .and_then(|s| {
+            // Fields after the (comm) blob: utime is 14, stime is 15 (1-based).
+            let rest = s.rsplit_once(')').map(|(_, r)| r.to_string())?;
+            let f: Vec<&str> = rest.split_whitespace().collect();
+            let utime = f.get(11)?.parse::<u64>().ok()?;
+            let stime = f.get(12)?.parse::<u64>().ok()?;
+            Some((utime + stime) * 1000 / hz)
+        })
+        .unwrap_or(0)
 }
 
 async fn run_collector(a: CollectorArgs) -> Result<()> {
@@ -353,6 +495,8 @@ async fn run_collector(a: CollectorArgs) -> Result<()> {
         viz: AtomicU64::new(0),
         top: Mutex::new(None),
         loc_ms: AtomicU64::new(0),
+        bytes_in: AtomicU64::new(0),
+        handler_us: Mutex::new(std::collections::VecDeque::new()),
     });
 
     match init_expect {
@@ -536,7 +680,10 @@ async fn handle_conn(stream: TcpStream, ctx: Arc<Ctx>) -> Result<()> {
             Ok(m) => m,
             Err(_) => continue,
         };
+        let raw = line.len() + 1; // the JSON line plus its newline framing byte
+        let t0 = std::time::Instant::now();
         ingest_metric(&ctx, &m);
+        record_footprint(&ctx, raw, t0.elapsed().as_micros() as u32);
     }
     Ok(())
 }
@@ -612,9 +759,27 @@ fn status_json(ctx: &Ctx) -> String {
         "null".to_string()
     };
     let t_rel = (now_ms().saturating_sub(ctx.start_ms)) as f64 / 1000.0;
+    // Measured footprint (E4): real bytes received, ingest-handler P99, and this
+    // process's resident memory and cumulative CPU, so a harness records measured
+    // numbers rather than modelled ones.
+    let bytes_in = ctx.bytes_in.load(Ordering::Relaxed);
+    let p99_us = handler_p99_us(ctx);
+    let rss_kb = self_rss_kb();
+    let cpu_ms = self_cpu_ms();
     format!(
-        "{{\"name\":\"{}\",\"visible\":{},\"n\":{},\"top1\":{},\"expect\":{},\"localized_ms\":{},\"t_rel_s\":{:.1}}}\n",
-        ctx.name, visible, ctx.graph.n, top1, expect, localized_ms, t_rel
+        "{{\"name\":\"{}\",\"visible\":{},\"n\":{},\"top1\":{},\"expect\":{},\"localized_ms\":{},\
+         \"t_rel_s\":{:.1},\"bytes_in\":{},\"p99_handler_us\":{},\"rss_kb\":{},\"cpu_ms\":{}}}\n",
+        ctx.name,
+        visible,
+        ctx.graph.n,
+        top1,
+        expect,
+        localized_ms,
+        t_rel,
+        bytes_in,
+        p99_us,
+        rss_kb,
+        cpu_ms
     )
 }
 
@@ -645,7 +810,11 @@ fn spawn_http_ingress(ctx: Arc<Ctx>, port: u16) {
                 // closes it, so a streaming sender reuses one connection.
                 while let Some(req) = http1::read_request(&mut stream).await {
                     match (req.method.as_str(), req.path.as_str()) {
-                        ("GET", "/healthz") | ("GET", "/") => {
+                        // Health endpoints answer ANY method (GET, HEAD, ...) so a
+                        // managed platform's readiness/liveness probe passes however
+                        // it is phrased; otherwise the ingress marks the app
+                        // unhealthy and returns "no available server" (503).
+                        (_, "/healthz") | (_, "/") => {
                             http1::write_response(&mut stream, "200 OK", "ok\n").await;
                         }
                         ("GET", "/status") => {
@@ -653,7 +822,10 @@ fn spawn_http_ingress(ctx: Arc<Ctx>, port: u16) {
                         }
                         ("POST", "/telemetry") => {
                             if let Ok(m) = serde_json::from_slice::<Metric>(&req.body) {
+                                let raw = req.body.len();
+                                let t0 = std::time::Instant::now();
                                 ingest_metric(&ctx, &m);
+                                record_footprint(&ctx, raw, t0.elapsed().as_micros() as u32);
                                 http1::write_response(&mut stream, "204 No Content", "").await;
                             } else {
                                 http1::write_response(
@@ -759,16 +931,62 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
         .fold(0u64, |acc, b| acc.wrapping_mul(31).wrapping_add(b as u64));
     let mut rng = rand::rngs::StdRng::seed_from_u64(a.seed ^ name_hash);
 
-    let mut cloud_conn: Option<TcpStream> = None;
     let mut edge_conn: Option<TcpStream> = None;
     let mut ticker = tokio::time::interval(Duration::from_millis(a.period_ms));
+
+    // Raw-TCP cloud sender: a dedicated task owns the cloud connection (and the
+    // optional recycle), fed by a small bounded channel, so the main loop never
+    // blocks on the cloud link. When the cloud is partitioned (a blackhole route or
+    // a disconnect) the task's write/reconnect times out and the cloud goes blind,
+    // while the loopback edge send in the loop below is never stalled, so the edge
+    // collector keeps localizing. Mirrors the HTTP (Crane Cloud) sender above.
+    let cloud_raw_tx = a.cloud.as_ref().map(|addr| {
+        let addr = addr.clone();
+        let recycle = a.conn_recycle_ms as u128;
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
+        tokio::spawn(async move {
+            let mut conn: Option<TcpStream> = None;
+            let mut since: u128 = 0;
+            while let Some(line) = rx.recv().await {
+                let now = now_ms();
+                if recycle > 0 && conn.is_some() && now.saturating_sub(since) >= recycle {
+                    conn = None;
+                }
+                if conn.is_none() {
+                    match tokio::time::timeout(
+                        Duration::from_millis(300),
+                        TcpStream::connect(&addr),
+                    )
+                    .await
+                    {
+                        Ok(Ok(s)) => {
+                            conn = Some(s);
+                            since = now;
+                        }
+                        _ => continue, // unreachable while partitioned: shed this sample
+                    }
+                }
+                if let Some(s) = conn.as_mut() {
+                    let w = tokio::time::timeout(Duration::from_millis(500), async {
+                        s.write_all(line.as_bytes()).await?;
+                        s.write_all(b"\n").await
+                    })
+                    .await;
+                    if !matches!(w, Ok(Ok(()))) {
+                        conn = None; // write failed or timed out (partitioned)
+                    }
+                }
+            }
+        });
+        tx
+    });
 
     // Wide-area cloud sender: a dedicated task owns one keep-alive connection and
     // streams telemetry to the Crane Cloud collector, so the main loop never
     // blocks on the WAN link. A small bounded channel sheds samples while the link
     // is down instead of flooding stale telemetry on heal.
     let cloud_tx = a.http_cloud.as_ref().and_then(|base| {
-        let mut sender = http1::HttpSender::new(base)?;
+        let mut sender = http1::HttpSender::new(base, a.http_bind.clone())?;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
         tokio::spawn(async move {
             while let Some(line) = rx.recv().await {
@@ -810,18 +1028,16 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
         let cloud_dropped = a.drop_cloud_dur_sec > 0.0
             && rel_sec >= a.drop_cloud_after_sec
             && rel_sec < a.drop_cloud_after_sec + a.drop_cloud_dur_sec;
-        if cloud_dropped {
-            cloud_conn = None; // force reconnect (which will also fail) after heal
-        }
 
-        if let Some(addr) = &a.cloud {
+        // Cloud link (raw TCP): hand the sample to the dedicated sender without
+        // blocking; drop it if the channel is full (link slow or partitioned),
+        // which is exactly the partition behaviour the study measures.
+        if let Some(tx) = &cloud_raw_tx {
             if !cloud_dropped {
-                send_line(addr, &mut cloud_conn, &line).await;
+                let _ = tx.try_send(line.clone());
             }
         }
-        // Wide-area cloud link (Crane Cloud): hand the sample to the streaming
-        // sender without blocking; drop it if the channel is full (link slow or
-        // partitioned), which is the partition behaviour the study measures.
+        // Wide-area cloud link (Crane Cloud): same non-blocking hand-off.
         if let Some(tx) = &cloud_tx {
             if !cloud_dropped {
                 let _ = tx.try_send(line.clone());
@@ -1008,14 +1224,55 @@ async fn main() -> Result<()> {
         Cmd::Service(a) => run_service(a).await,
         Cmd::Inject(a) => run_inject(a).await,
         Cmd::GenCompose(a) => run_gen_compose(a),
+        Cmd::GenK8s(a) => run_gen_k8s(a),
+        Cmd::Describe(a) => run_describe(a),
+        Cmd::Status(a) => {
+            print!("{}", http1::get_text(&a.url).await?);
+            Ok(())
+        }
     }
 }
 
+/// Print the scenario's services as CSV so the E6 harness can map each service to
+/// its edge device, that device's partition length, and its side.
+fn run_describe(a: DescribeArgs) -> Result<()> {
+    let topo = Scenario::load(&a.scenario)?.build()?;
+    println!("service,device,partition_sec,side");
+    for i in 0..topo.n() {
+        let name = &topo.graph.names[i];
+        match topo.service_device[i] {
+            Some(d) => println!(
+                "{},{},{},edge",
+                name, topo.device_ids[d], topo.partition_sec[d]
+            ),
+            None => println!("{},cloud,0,cloud", name),
+        }
+    }
+    Ok(())
+}
+
 // --------------------------------------------------------------- gen-compose --
-/// Emit a docker-compose file for a scenario: one container per microservice,
-/// one edge collector per device plus a cloud collector, each service wired to
-/// its device's edge collector and the cloud, and each edge device cut from the
-/// cloud for its own partition time using the existing `--drop-cloud-*` flags.
+/// Emit a docker-compose file for a scenario that supports a REAL per-device
+/// network partition (not an in-process drop).
+///
+/// Topology of networks:
+///   * `cloud-net`    holds the cloud collector and the cloud microservices.
+///   * `<id>-net`     one per edge device, holds that device's edge collector and
+///                    its microservices. The cloud collector also joins every
+///                    `<id>-net`, so a device reaches the cloud across its own net.
+///
+/// A partition of device `d` is then a single `docker network disconnect
+/// <project>_<id>-net <project>-cloud-1`: the device's services can no longer
+/// reach the cloud collector, while their own edge collector (same net) and the
+/// cloud microservices (cloud-net) are unaffected. Reconnecting heals it. This is
+/// what `scripts/e6/run_events_mesh.sh` drives, and it is a genuine network cut,
+/// which is why the demo `--drop-cloud-*` flags are gone.
+///
+/// Each collector serves GET /status on an exposed HTTP port, so the E6 harness
+/// reads its live view (visible count, top-1, localization time) from the host
+/// without an in-container HTTP client. A `sovloc-control` helper joins every net
+/// so the harness can `docker compose exec sovloc-control mesh inject ...` to set
+/// a culprit on any service even while a device is partitioned.
 fn run_gen_compose(a: GenComposeArgs) -> Result<()> {
     let scenario = Scenario::load(&a.scenario)?;
     let topo = scenario.build()?;
@@ -1049,49 +1306,73 @@ fn run_gen_compose(a: GenComposeArgs) -> Result<()> {
     let vol = format!("./{}:{}:ro", a.scenario, mount);
     let fault = a.fault_at_sec;
 
+    // Network names: one per device plus the cloud net. The cloud collector and
+    // the control helper join all of them.
+    let dev_net = |id: &str| format!("{id}-net");
+    let all_nets: Vec<String> = std::iter::once("cloud-net".to_string())
+        .chain(topo.device_ids.iter().map(|id| dev_net(id)))
+        .collect();
+    let all_nets_yaml = format!("[{}]", all_nets.join(", "));
+
     let mut s = String::new();
     s.push_str(&format!(
         "# Generated by `mesh gen-compose` from {}. Regenerate rather than editing by hand.\n",
         a.scenario
     ));
-    s.push_str("# Bring up from the repo root with a shared clock:\n");
+    s.push_str("# Harness-driven E6 (real per-device network partition):\n");
+    s.push_str("#   scripts/e6/run_events_mesh.sh   (brings this up, runs >=30 events)\n");
+    s.push_str("# Standalone scheduled demo (one baked fault at t+fault):\n");
     s.push_str(
-        "#   SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) docker compose -f <this file> up --build\n",
+        "#   SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) SOVLOC_CULPRIT=<svc> docker compose -f <this file> up --build\n",
     );
-    s.push_str(
-        "# Each edge device is cut from the cloud for its own partition time, so the cloud\n",
-    );
-    s.push_str(
-        "# collector goes blind to that device for that window while the device's own edge\n",
-    );
-    s.push_str("# collector keeps localizing.\n");
+    s.push_str("# Partition a device by hand (real cut):\n");
+    s.push_str(&format!(
+        "#   docker network disconnect sovloc-{}_<id>-net sovloc-{}-cloud-1\n",
+        scenario.name, scenario.name
+    ));
     s.push_str(&format!("name: sovloc-{}\n\n", scenario.name));
     s.push_str("services:\n");
 
-    // Cloud collector: sees every service until each device's partition cuts it.
+    // Cloud collector: on cloud-net and every device net; HTTP /status exposed.
     s.push_str("  cloud:\n    build: .\n    cap_add: [\"NET_ADMIN\"]\n");
     s.push_str(&format!("    volumes: [\"{vol}\"]\n"));
     s.push_str(&format!(
-        "    command: [\"collector\",\"--name\",\"cloud\",\"--port\",\"{}\",\"--scenario\",\"{}\",\"--expect-culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\"]\n",
-        a.cloud_port, mount, culprit, fault
+        "    ports: [\"{p}:{p}\"]\n",
+        p = a.cloud_http_port
+    ));
+    s.push_str(&format!("    networks: {all_nets_yaml}\n"));
+    s.push_str(&format!(
+        "    command: [\"collector\",\"--name\",\"cloud\",\"--port\",\"{}\",\"--http-port\",\"{}\",\"--scenario\",\"{}\",\"--expect-culprit\",\"${{SOVLOC_CULPRIT:-none}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH:-0}}\",\"--fault-at-sec\",\"{}\",\"--stale-ms\",\"3000\"]\n",
+        a.cloud_port, a.cloud_http_port, mount, fault
     ));
 
-    // One edge collector per device, each on its own telemetry port.
+    // Control helper: joins every net so inject reaches any service/collector even
+    // while a device is partitioned. It runs nothing until the harness execs it.
+    s.push_str("  sovloc-control:\n    build: .\n");
+    s.push_str(&format!("    volumes: [\"{vol}\"]\n"));
+    s.push_str(&format!("    networks: {all_nets_yaml}\n"));
+    s.push_str("    entrypoint: [\"sleep\", \"infinity\"]\n");
+
+    // One edge collector per device, on its own net; HTTP /status exposed.
     for (d, id) in topo.device_ids.iter().enumerate() {
         let port = a.edge_base_port as usize + d;
+        let hp = a.edge_http_base_port as usize + d;
         s.push_str(&format!(
             "  {id}:\n    build: .\n    cap_add: [\"NET_ADMIN\"]\n"
         ));
         s.push_str(&format!("    volumes: [\"{vol}\"]\n"));
+        s.push_str(&format!("    ports: [\"{hp}:{hp}\"]\n"));
+        s.push_str(&format!("    networks: [{}]\n", dev_net(id)));
         s.push_str(&format!(
-            "    command: [\"collector\",\"--name\",\"{}\",\"--port\",\"{}\",\"--scenario\",\"{}\",\"--expect-culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\"]\n",
-            id, port, mount, culprit, fault
+            "    command: [\"collector\",\"--name\",\"{}\",\"--port\",\"{}\",\"--http-port\",\"{}\",\"--scenario\",\"{}\",\"--expect-culprit\",\"${{SOVLOC_CULPRIT:-none}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH:-0}}\",\"--fault-at-sec\",\"{}\",\"--stale-ms\",\"3000\"]\n",
+            id, port, hp, mount, fault
         ));
     }
 
-    // One container per microservice. Edge services stream to their device's
-    // collector and the cloud, and drop the cloud link for the device's
-    // partition window; cloud services stream to the cloud collector only.
+    // One container per microservice. A device's services stream to their edge
+    // collector (same net, never cut) and to the cloud collector (across the
+    // device net, cut when that net is disconnected from the cloud). Cloud
+    // services stream to the cloud collector only.
     for i in 0..topo.n() {
         let name = &topo.graph.names[i];
         s.push_str(&format!(
@@ -1102,28 +1383,30 @@ fn run_gen_compose(a: GenComposeArgs) -> Result<()> {
             Some(d) => {
                 let port = a.edge_base_port as usize + d;
                 let edge_name = &topo.device_ids[d];
-                let dur = topo.partition_sec[d];
+                s.push_str(&format!("    networks: [{}]\n", dev_net(edge_name)));
                 s.push_str(&format!(
-                    "    command: [\"service\",\"--name\",\"{}\",\"--scenario\",\"{}\",\"--culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\",\"--cloud\",\"cloud:{}\",\"--edge\",\"{}:{}\",\"--drop-cloud-after-sec\",\"{}\",\"--drop-cloud-dur-sec\",\"{}\"]\n",
-                    name, mount, culprit, fault, a.cloud_port, edge_name, port, fault, dur
+                    "    command: [\"service\",\"--name\",\"{}\",\"--scenario\",\"{}\",\"--culprit\",\"${{SOVLOC_CULPRIT:-none}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH:-0}}\",\"--fault-at-sec\",\"{}\",\"--cloud\",\"cloud:{}\",\"--edge\",\"{}:{}\"]\n",
+                    name, mount, fault, a.cloud_port, edge_name, port
                 ));
             }
             None => {
+                s.push_str("    networks: [cloud-net]\n");
                 s.push_str(&format!(
-                    "    command: [\"service\",\"--name\",\"{}\",\"--scenario\",\"{}\",\"--culprit\",\"${{SOVLOC_CULPRIT:-{}}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH}}\",\"--fault-at-sec\",\"{}\",\"--cloud\",\"cloud:{}\"]\n",
-                    name, mount, culprit, fault, a.cloud_port
+                    "    command: [\"service\",\"--name\",\"{}\",\"--scenario\",\"{}\",\"--culprit\",\"${{SOVLOC_CULPRIT:-none}}\",\"--start-epoch-ms\",\"${{SOVLOC_EPOCH:-0}}\",\"--fault-at-sec\",\"{}\",\"--cloud\",\"cloud:{}\"]\n",
+                    name, mount, fault, a.cloud_port
                 ));
             }
         }
     }
 
-    s.push_str(&format!(
-        "\nnetworks:\n  default:\n    name: sovloc-{}-net\n",
-        scenario.name
-    ));
+    // Network definitions.
+    s.push_str("\nnetworks:\n");
+    for net in &all_nets {
+        s.push_str(&format!("  {net}: {{}}\n"));
+    }
 
     std::fs::write(&a.out, &s)?;
-    let containers = topo.n() + topo.device_ids.len() + 1;
+    let containers = topo.n() + topo.device_ids.len() + 2; // services + edge collectors + cloud + control
     println!(
         "Wrote {} for scenario '{}': {} edge devices, {} microservices, {} containers.",
         a.out,
@@ -1132,11 +1415,237 @@ fn run_gen_compose(a: GenComposeArgs) -> Result<()> {
         topo.n(),
         containers
     );
-    println!("Bring it up from the repo root with a shared clock:");
+    println!("Run the E6 production harness (real per-device cut, >=30 events):");
     println!(
-        "  SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) SOVLOC_CULPRIT={} docker compose -f {} up --build",
+        "  COMPOSE_FILE={} PLATFORM=single-node-mesh EVENTS=30 SCENARIO={} scripts/e6/run_events_mesh.sh",
+        a.out, a.scenario
+    );
+    println!(
+        "Or a standalone scheduled demo: SOVLOC_EPOCH=$(( $(date +%s%3N) + 8000 )) SOVLOC_CULPRIT={} docker compose -f {} up --build",
         culprit, a.out
     );
-    println!("Each edge device's partition starts at t+{fault}s and lasts its own partition_time.");
+    Ok(())
+}
+
+// ----------------------------------------------------------------- gen-k8s ---
+/// Emit Kubernetes manifests for the full multi-edge mesh and a per-device cut
+/// NetworkPolicy. The pod labels (`device=<id>`) let a single policy restrict a
+/// device's egress to its own device pods plus DNS, which blocks the cloud
+/// collector while leaving the device's own edge collector reachable: a real
+/// network partition applied with `kubectl apply -f cut-<id>.yaml` and healed
+/// with `kubectl delete -f cut-<id>.yaml`. k3s enforces NetworkPolicy by default.
+fn run_gen_k8s(a: GenK8sArgs) -> Result<()> {
+    let scenario = Scenario::load(&a.scenario)?;
+    let topo = scenario.build()?;
+
+    let valid = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 63
+            && s.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '.')
+    };
+    for id in &topo.device_ids {
+        if !valid(id) {
+            anyhow::bail!("edge-device id '{id}' is not a valid Kubernetes name");
+        }
+    }
+    for name in &topo.graph.names {
+        if !valid(name) {
+            anyhow::bail!("microservice name '{name}' is not a valid Kubernetes name");
+        }
+    }
+
+    let ns = &a.namespace;
+    let img = &a.image;
+    let pull = &a.image_pull_policy;
+    let scen_path = format!("{}/scenario.yaml", a.mount_dir);
+    let scen_text = std::fs::read_to_string(&a.scenario)?;
+
+    // A Deployment whose single container runs the mesh with the given args (or a
+    // sleep for the control pod), with the scenario ConfigMap mounted.
+    let deploy = |name: &str,
+                  role: &str,
+                  device: Option<&str>,
+                  args: &[String],
+                  sleep: bool|
+     -> String {
+        let dev_label = device
+            .map(|d| format!("\n    device: {d}"))
+            .unwrap_or_default();
+        let dev_label_t = device
+            .map(|d| format!("\n        device: {d}"))
+            .unwrap_or_default();
+        let cmd = if sleep {
+            "        command: [\"sleep\", \"infinity\"]\n".to_string()
+        } else {
+            let a: Vec<String> = args.iter().map(|x| format!("\"{x}\"")).collect();
+            format!("        args: [{}]\n", a.join(", "))
+        };
+        format!(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: {name}\n  namespace: {ns}\n  labels:\n    app: {name}\n    sovloc-role: {role}{dev_label}\nspec:\n  replicas: 1\n  selector:\n    matchLabels:\n      app: {name}\n  template:\n    metadata:\n      labels:\n        app: {name}\n        sovloc-role: {role}{dev_label_t}\n    spec:\n      containers:\n      - name: mesh\n        image: {img}\n        imagePullPolicy: {pull}\n{cmd}        volumeMounts:\n        - name: scenario\n          mountPath: {mount}\n          readOnly: true\n      volumes:\n      - name: scenario\n        configMap:\n          name: sovloc-scenario\n---\n",
+            mount = a.mount_dir
+        )
+    };
+    let service = |name: &str, ports: &[(&str, u16)]| -> String {
+        let mut p = String::new();
+        for (pn, port) in ports {
+            p.push_str(&format!(
+                "  - {{ name: {pn}, port: {port}, targetPort: {port} }}\n"
+            ));
+        }
+        format!(
+            "apiVersion: v1\nkind: Service\nmetadata:\n  name: {name}\n  namespace: {ns}\nspec:\n  selector:\n    app: {name}\n  ports:\n{p}---\n"
+        )
+    };
+
+    let mut m = String::new();
+    m.push_str(&format!(
+        "# Generated by `mesh gen-k8s` from {}. Regenerate rather than editing by hand.\n",
+        a.scenario
+    ));
+    m.push_str(
+        "# Apply:   kubectl apply -f mesh.yaml\n# Partition a device (real cut): kubectl apply -f cuts/cut-<id>.yaml ; heal: kubectl delete -f cuts/cut-<id>.yaml\n",
+    );
+    // Namespace.
+    m.push_str(&format!(
+        "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {ns}\n---\n"
+    ));
+    // Scenario ConfigMap (indented block scalar).
+    let mut indented = String::new();
+    for l in scen_text.lines() {
+        indented.push_str("    ");
+        indented.push_str(l);
+        indented.push('\n');
+    }
+    m.push_str(&format!(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: sovloc-scenario\n  namespace: {ns}\ndata:\n  scenario.yaml: |\n{indented}---\n"
+    ));
+    // Control pod.
+    m.push_str(&deploy("sovloc-control", "control", None, &[], true));
+
+    // Cloud collector + Service.
+    let cloud_args: Vec<String> = [
+        "collector",
+        "--name",
+        "cloud",
+        "--port",
+        &a.cloud_port.to_string(),
+        "--http-port",
+        &a.cloud_http_port.to_string(),
+        "--scenario",
+        &scen_path,
+        "--stale-ms",
+        "3000",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    m.push_str(&deploy("cloud", "cloud", None, &cloud_args, false));
+    m.push_str(&service(
+        "cloud",
+        &[
+            ("telemetry", a.cloud_port),
+            ("control", 9101),
+            ("http", a.cloud_http_port),
+        ],
+    ));
+
+    // Edge collectors + Services.
+    for (d, id) in topo.device_ids.iter().enumerate() {
+        let tport = a.edge_base_port + d as u16;
+        let hport = a.edge_http_base_port + d as u16;
+        let args: Vec<String> = [
+            "collector",
+            "--name",
+            id,
+            "--port",
+            &tport.to_string(),
+            "--http-port",
+            &hport.to_string(),
+            "--scenario",
+            &scen_path,
+            "--stale-ms",
+            "3000",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        m.push_str(&deploy(id, "edge-collector", Some(id), &args, false));
+        m.push_str(&service(
+            id,
+            &[("telemetry", tport), ("control", 9101), ("http", hport)],
+        ));
+    }
+
+    // One Deployment + Service per microservice.
+    for i in 0..topo.n() {
+        let name = &topo.graph.names[i];
+        let mut args: Vec<String> = vec![
+            "service".into(),
+            "--name".into(),
+            name.clone(),
+            "--scenario".into(),
+            scen_path.clone(),
+            "--culprit".into(),
+            "none".into(),
+            "--cloud".into(),
+            format!("cloud:{}", a.cloud_port),
+            // A k8s NetworkPolicy partition only blocks NEW connections, so the
+            // service must recycle its cloud socket for the cut to take effect.
+            // The Docker tier severs the socket directly (network disconnect) and
+            // leaves this at the default 0, avoiding reconnect churn on one host.
+            // This must beat the fault lead: the harness applies the cut, then
+            // injects the fault LEAD_MS later (1500 ms), so every pre-cut stream
+            // (age up to this value, plus one report interval) must be recycled and
+            // re-blocked before the fault is visible, or a post-fault sample would
+            // ride the old stream to the cloud and the cloud would not go blind.
+            // 1200 ms + a 200 ms report interval = 1400 ms < 1500 ms closes that
+            // window on every event, while staying loose enough to keep the
+            // reconnect rate (and its scheduling cost) near the single persistent
+            // connection, so the edge diagnosis time is unaffected.
+            "--conn-recycle-ms".into(),
+            "1200".into(),
+        ];
+        match topo.service_device[i] {
+            Some(d) => {
+                let tport = a.edge_base_port + d as u16;
+                let id = &topo.device_ids[d];
+                args.push("--edge".into());
+                args.push(format!("{id}:{tport}"));
+                m.push_str(&deploy(name, "edge-svc", Some(id), &args, false));
+            }
+            None => {
+                m.push_str(&deploy(name, "cloud-svc", None, &args, false));
+            }
+        }
+        m.push_str(&service(name, &[("control", 9100)]));
+    }
+
+    // Write the manifest and the per-device cut policies.
+    std::fs::create_dir_all(&a.out_dir)?;
+    std::fs::create_dir_all(format!("{}/cuts", a.out_dir))?;
+    std::fs::write(format!("{}/mesh.yaml", a.out_dir), &m)?;
+    for id in &topo.device_ids {
+        let np = format!(
+            "# Real partition of device {id}: restrict its egress to its own device\n# pods plus DNS, which blocks the cloud collector. apply=cut, delete=heal.\napiVersion: networking.k8s.io/v1\nkind: NetworkPolicy\nmetadata:\n  name: cut-{id}\n  namespace: {ns}\nspec:\n  podSelector:\n    matchLabels:\n      device: {id}\n  policyTypes: [Egress]\n  egress:\n  - to:\n    - podSelector:\n        matchLabels:\n          device: {id}\n  - to:\n    - namespaceSelector: {{}}\n      podSelector:\n        matchLabels:\n          k8s-app: kube-dns\n    ports:\n    - {{ protocol: UDP, port: 53 }}\n    - {{ protocol: TCP, port: 53 }}\n"
+        );
+        std::fs::write(format!("{}/cuts/cut-{id}.yaml", a.out_dir), np)?;
+    }
+
+    let objs = (topo.n() + topo.device_ids.len() + 1) * 2 + 3; // deploy+svc each (-control svc) + ns+cm+control
+    println!(
+        "Wrote {}/mesh.yaml and {} cut policies for '{}': {} edge devices, {} microservices (~{} objects).",
+        a.out_dir,
+        topo.device_ids.len(),
+        scenario.name,
+        topo.device_ids.len(),
+        topo.n(),
+        objs
+    );
+    println!("Deploy:  kubectl apply -f {}/mesh.yaml", a.out_dir);
+    println!(
+        "Run E6:  SCENARIO={} NAMESPACE={} PLATFORM=k3s EVENTS=30 scripts/e6/run_events_k8s.sh",
+        a.scenario, ns
+    );
     Ok(())
 }

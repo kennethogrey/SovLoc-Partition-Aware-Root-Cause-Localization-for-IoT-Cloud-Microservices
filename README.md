@@ -30,7 +30,19 @@ not a tautology: for an edge side fault a central collector's time to diagnosis
 grows with the partition while an edge local collector stays flat, and the cost is
 symmetric, because for a cloud side fault the edge local collector is the one that
 waits out the cut. The hybrid is fast on both at a small fraction of the bytes.
-See `results/analysis/fig_sovloc_results.svg`.
+
+The headline system under test is a **multi-edge topology**: five edge devices
+holding about twenty microservices each but deliberately uneven (20, 15, 25, 18, 22;
+100 edge services plus a three service cloud back end), and a different partition
+length on every device (10, 20, 30, 40, 60 s). The five distinct partitions become
+the x axis of the result: the central collector's time to diagnosis climbs with the
+cut on each device while the edge local and hybrid placements stay flat, and the
+hybrid crosses tens of thousands of times fewer bytes. See
+`results/analysis/fig_sovloc_multiedge.svg` (the multi-edge headline) and
+`results/analysis/fig_sovloc_results.svg` (the single-edge version that isolates the
+same mechanism on a seven service chain). The topology is data driven
+(`scenarios/five-edge-100.yaml`), so it rescales by editing a file rather than the
+source.
 
 ## Requirements
 
@@ -46,12 +58,13 @@ Either the pinned Rust toolchain, or just Docker.
 make reproduce
 ```
 
-This builds the workspace, runs the five experiment families (E1 placement
-comparison, E2 detector and ranker ablation, E4 telemetry cost, E7 scale, FP false
-alarm sweep) with seed 42, and writes the summary tables, the survival statistics,
-the LaTeX macros, and the figure. The experiment is deterministic, so the same
-command always produces the same numbers. Run `make test` for the unit tests and
-`make env` to record the machine to `results/environment.txt`.
+This builds the workspace, runs the experiment families (EM multi-edge placement
+comparison, E1 single-edge mechanism, E2 detector and ranker ablation, E4 telemetry
+cost, E7 scale, FP false alarm sweep) with seed 42, and writes the summary tables,
+the survival statistics, the LaTeX macros, and the figures. The experiment is
+deterministic, so the same command always produces the same numbers. Run `make test`
+for the unit tests and `make env` to record the machine to
+`results/environment.txt`.
 
 Container path (nothing but Docker on the host): `./run.sh`.
 
@@ -59,8 +72,11 @@ Container path (nothing but Docker on the host): `./run.sh`.
 
 | File | What it is |
 | --- | --- |
-| `results/raw_e1..e7.csv`, `raw_fp.csv` | every run, one row each (the raw record) |
-| `results/analysis/summary_e1..e7.csv` | the summary tables: success with Wilson intervals, Kaplan-Meier median, IQR, P95, P99, measured bytes |
+| `results/raw_em.csv`, `raw_e1..e7.csv`, `raw_fp.csv` | every run, one row each (the raw record) |
+| `results/analysis/summary_em.csv` | the multi-edge headline: per placement success (Wilson), edge/cloud Kaplan-Meier median, P95, P99, measured bytes |
+| `results/analysis/summary_em_devices.csv` | the multi-edge result per edge device: size, partition length, success, median time to diagnosis, bytes |
+| `results/analysis/fig_sovloc_multiedge.svg` | the multi-edge results figure: time to diagnosis against each edge's partition |
+| `results/analysis/summary_e1..e7.csv` | the single-edge mechanism and ablation tables: success with Wilson intervals, Kaplan-Meier median, IQR, P95, P99, measured bytes |
 | `results/analysis/ecdf_e1.csv` | the per cell empirical CDF (censoring aware), supplementary |
 | `results/analysis/stats.txt` | the survival statistics: slopes with bootstrap CI, log-rank, TOST equivalence at partition zero, Holm correction |
 | `results/analysis/numbers.tex` | the LaTeX macros the manuscript cites, so no number is typed by hand |
@@ -81,7 +97,19 @@ that matches the manuscript is the annotated tag `v2.0-revision`.
 The simulation is one tier. The production tier runs the same edge and cloud
 service split on real infrastructure, so the cloud side is genuinely remote from
 the edge side and a partition is a real network cut rather than an in process
-toggle. The cloud half (the cloud collector plus enrich, store, and alerting) runs
+toggle.
+
+The headline production tier is the **full multi-edge mesh**: `mesh gen-compose`
+(Docker) and `mesh gen-k8s` (Kubernetes) stand up the whole
+`scenarios/five-edge-100.yaml` topology (103 services, 5 edge collectors, a cloud
+collector), and a partition is a real per-device network cut, `docker network
+disconnect` for a device's net on Docker or a per-device `NetworkPolicy` on a
+cluster. `scripts/e6/run_events_mesh.sh` (Docker) and `scripts/e6/run_events_k8s.sh`
+(k3s / OpenStack / Crane Cloud) run at least thirty events and record one row per
+event; during each edge-device cut the edge collector keeps localizing that
+device's fault while the cloud collector loses exactly that device's services.
+`RUNBOOK.md` section C0 has the step by step. The lighter 7-service cloud-half tier
+below remains as a cross-check for platforms that cannot host the full mesh. The cloud half (the cloud collector plus enrich, store, and alerting) runs
 on the platform; the edge half (the four edge services plus the edge collector) is
 driven by the harness; and the cut severs the edge to cloud link. During the cut
 the cloud collector still sees its three local cloud services, so "cloud sees 0 of
@@ -106,8 +134,8 @@ scripts/e6/compare_prod.sh results/production/single-node.csv
 | `crates/rca-core` | the non artificial intelligence RCA library: robust change point, robust scorer, personalized PageRank, and the survival statistics (Wilson, Kaplan-Meier, log-rank, TOST, Holm, bootstrap), unit tested |
 | `crates/sim` | the deterministic seeded simulation (`sim`) and the analysis binary (`analysis`) that turns the raw CSVs into tables, statistics, `numbers.tex`, and the figure |
 | `crates/mesh` | the real networked mesh: real services and two live collectors over TCP and HTTP, the production tier |
-| `crates/scenario` | reads a YAML topology (many edge devices, each with its own partition time) for the configurable mesh |
-| `scripts/e6/` | the E6 production harness: `run_events.sh`, `calibrate.sh` (E3), `compare_prod.sh`, and the per platform cut scripts |
+| `crates/scenario` | reads a YAML topology (many edge devices, each with its own microservice count and partition time) that drives both the multi-edge simulation headline (`scenarios/five-edge-100.yaml`) and the configurable production mesh |
+| `scripts/e6/` | the E6 production harness: `run_events_mesh.sh` (full multi-edge mesh on Docker), `run_events_k8s.sh` (multi-edge on a cluster), `run_events.sh` (7-service cloud-half tier), `calibrate.sh` (E3), `compare_prod.sh`, and the per platform cut scripts |
 | `scripts/cranecloud/` | the CRANE Cloud real Internet tier: build and push, deploy, probe, and partition the link |
 | `deploy/k3s/`, `deploy/openstack/` | the cloud half manifests and runbooks for the cluster tiers |
 | `Dockerfile`, `docker/` | the pinned reproduction and runtime images |

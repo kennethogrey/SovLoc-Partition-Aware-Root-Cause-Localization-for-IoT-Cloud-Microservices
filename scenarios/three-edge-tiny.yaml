@@ -1,0 +1,20 @@
+# A tiny multi-edge scenario for fast end-to-end validation of the production
+# mesh and the E6 harness (three edge devices, uneven sizes, distinct partitions).
+# It is intentionally small so the whole mesh comes up in seconds on one host.
+# The headline runs use scenarios/five-edge-100.yaml.
+name: three-edge-tiny
+reps: 5
+seed: 42
+loss: 0.0
+fault_at_sec: 3.0
+horizon_sec: 20.0
+
+number_of_edge_devices: 3
+total_microservices: 7
+
+cloud_services: [enrich, store, alerting]
+
+edge_devices:
+  - { id: edge-1, service_count: 2, partition_time: 5 }
+  - { id: edge-2, service_count: 3, partition_time: 8 }
+  - { id: edge-3, service_count: 2, partition_time: 6 }

@@ -1,0 +1,37 @@
+# The headline multi-edge system under test.
+#
+# Five edge devices, about twenty microservices on each but deliberately uneven,
+# and a different partition length on every device. This is the configuration the
+# brief asks for: more than one edge, at least ~20 microservices per edge, varied
+# per edge, and a distinct partition per edge device.
+#
+#   edge-1 -> 20 microservices, partition 10 s   (short cut)
+#   edge-2 -> 15 microservices, partition 30 s
+#   edge-3 -> 25 microservices, partition 20 s
+#   edge-4 -> 18 microservices, partition 60 s   (long cut)
+#   edge-5 -> 22 microservices, partition 40 s
+#
+# Total: 100 edge microservices + 3 cloud = 103 services. The five distinct
+# partition lengths (10,20,30,40,60 s) become the x-axis of the results figure:
+# the central collector's time to diagnosis grows with the cut on each device,
+# while the edge-local and hybrid placements stay flat. The call graph is
+# generated from this structure (each device is a local chain whose last service
+# crosses into the cloud backend), so no source change is needed to rescale it.
+name: five-edge-100
+reps: 30
+seed: 42
+loss: 0.0
+fault_at_sec: 4.0
+horizon_sec: 90.0
+
+number_of_edge_devices: 5
+total_microservices: 100
+
+cloud_services: [enrich, store, alerting]
+
+edge_devices:
+  - { id: edge-1, service_count: 20, partition_time: 10 }
+  - { id: edge-2, service_count: 15, partition_time: 30 }
+  - { id: edge-3, service_count: 25, partition_time: 20 }
+  - { id: edge-4, service_count: 18, partition_time: 60 }
+  - { id: edge-5, service_count: 22, partition_time: 40 }

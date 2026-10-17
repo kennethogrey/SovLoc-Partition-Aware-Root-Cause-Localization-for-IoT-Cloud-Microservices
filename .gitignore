@@ -43,3 +43,7 @@ paper/overleaf/*.synctex.gz
 paper/overleaf/*.bbl
 paper/overleaf/*.blg
 paper/overleaf/*.toc
+
+# Kubernetes manifests emitted by `mesh gen-k8s` are derived from a scenario;
+# keep the scenarios in git and regenerate the manifests rather than committing them.
+deploy/k8s/generated/

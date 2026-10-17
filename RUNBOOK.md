@@ -51,7 +51,109 @@ and toolchain.
 
 ---
 
+## C0. Multi-edge production: the full 5-edge mesh (real per-device cut)
+
+This is the headline production tier: the whole `scenarios/five-edge-100.yaml`
+topology (5 edge devices, ~20 microservices each, a distinct partition per device,
+103 services + 5 edge collectors + a cloud collector) deployed for real, where a
+partition is a genuine **network cut of one device from the cloud**, not an
+in-process toggle. Each event injects a random culprit, cuts that culprit's device
+for its partition length, and records one row: the device's edge collector
+localizes its own fault during the cut, while the cloud collector loses exactly
+that device's services and cannot localize the edge fault until the link heals.
+Output schema matches the EM simulation, so `scripts/e6/compare_prod.sh` compares
+both.
+
+Build the mesh first: `cargo build --release -p mesh`.
+
+### C0.1 single-node (Docker, the whole mesh on one host)
+
+The lightest full-mesh tier: ~109 containers on one host, cut with
+`docker network disconnect`. Validate on the tiny scenario first (15 containers,
+seconds to come up), then run the real one.
+
+```bash
+# smoke test (tiny), proves the harness end to end
+SCENARIO=scenarios/three-edge-tiny.yaml PLATFORM=single-node-mesh-tiny EVENTS=3 \
+  scripts/e6/run_events_mesh.sh
+
+# the real multi-edge run (>= 30 events); first run builds the image (~3 min)
+SCENARIO=scenarios/five-edge-100.yaml PLATFORM=single-node-mesh EVENTS=30 \
+  scripts/e6/run_events_mesh.sh
+scripts/e6/compare_prod.sh results/production/single-node-mesh.csv
+```
+
+Each row shows `edge_localized`, `edge_ttd_ms`, `cloud_localized_during_cut` (0 for
+an edge fault during its cut), and `cloud_min_visible` (drops by exactly the cut
+device's size). `KEEP_UP=1` leaves the mesh running between runs.
+
+### C0.2 k3s / OpenStack-k8s / Crane Cloud (the full mesh on a cluster)
+
+`mesh gen-k8s` writes a Deployment+Service per microservice, one edge collector per
+device, a cloud collector, a control pod, and a per-device cut NetworkPolicy. A
+real partition is `kubectl apply -f cuts/cut-<id>.yaml` (restricts that device's
+egress to its own pods plus DNS, blocking the cloud); healing is `kubectl delete`.
+k3s enforces NetworkPolicy by default; on another cluster confirm a policy-enforcing
+CNI (Calico / Cilium).
+
+Two cluster facts the harness depends on, both learned the hard way:
+
+- **Pod budget.** The full mesh is ~110 pods. A kubelet defaults to `max-pods=110`,
+  and system pods already use ~11, so the mesh overflows and the extra pods stay
+  `Pending`. Raise the cap (k3s: add `kubelet-arg: ["max-pods=150"]` to
+  `/etc/rancher/k3s/config.yaml` and `sudo systemctl restart k3s`; verify with
+  `kubectl get node <n> -o jsonpath='{.status.capacity.pods}'`), use a multi-node
+  pool, or run a smaller scenario and say so (disclosed, not hidden).
+- **A NetworkPolicy only blocks NEW connections.** The mesh service holds one
+  persistent telemetry stream, so an egress cut alone would ride the established
+  socket and the cloud would never go blind. `gen-k8s` therefore starts every
+  service with `--conn-recycle-ms 1200`, so the service reopens its cloud socket and
+  the reopen fails during the cut. The harness injects the fault 1500 ms after it
+  applies the cut (LEAD_MS), which beats the recycle window plus one 200 ms report
+  interval, so every pre-cut stream is re-blocked before the fault is visible and the
+  cloud is blind on every event, while the recycle stays loose enough not to inflate
+  the edge diagnosis time. The Docker tier needs none of this (its `network
+  disconnect` severs the socket directly), and keeps the default `--conn-recycle-ms 0`.
+
+The harness now also **self-tests the data path before writing any rows** (it probes
+`cloud` and one edge `/status` through the control pod and aborts, writing no CSV, if
+they do not answer) and **tears down the workloads but keeps the namespace** (deleting
+the namespace can hang for minutes when a cluster add-on's aggregated API is
+unhealthy, e.g. a crash-looping metrics-server stalls `metrics.k8s.io` discovery and
+the namespace garbage-collector with it).
+
+Build the image from source (it carries the `--conn-recycle-ms` flag; no pushed tag
+does) and get it into the cluster, then run:
+
+```bash
+# build from source and import into k3s's containerd (no registry pull; PULL=Never).
+# add `--network host` to the build if a local OpenStack/Kolla broke the docker bridge.
+docker build -t sovloc-mesh:local .
+docker save sovloc-mesh:local | sudo k3s ctr images import -
+
+# --- k3s (uses the imported local image) ---
+SCENARIO=scenarios/five-edge-100.yaml NAMESPACE=sovloc PLATFORM=k3s EVENTS=30 \
+  K8S_IMAGE=sovloc-mesh:local IMAGE_PULL_POLICY=Never \
+  scripts/e6/run_events_k8s.sh
+scripts/e6/compare_prod.sh results/production/k3s.csv
+```
+
+The OpenStack and Crane Cloud tiers have their own harnesses (`run_events_openstack.sh`
+over Kolla VMs, `run_events_cranecloud.sh` over the real Internet); see their sections
+below.
+
+The harness deploys `mesh.yaml`, injects and polls `/status` through the control
+pod (`kubectl exec deploy/sovloc-control -- mesh status --url ...`), and tears the
+mesh down at the end (`KEEP_UP=1` keeps it). Point `KUBECTL`/kubeconfig at the
+target cluster for the OpenStack and Crane tiers.
+
+---
+
 ## C. Produce the E6 production results (>= 30 events per platform)
+
+> Lighter alternative to C0: the original 7-service cloud-half tier. Use it when a
+> platform cannot host the full ~110-pod multi-edge mesh, or as a cross-check. C0
+> is the headline multi-edge production.
 
 Model used on every remote tier: the **cloud half** (cloud collector + enrich,
 store, alerting) runs on the platform, genuinely remote; the **edge half** (the four
@@ -129,12 +231,21 @@ CRANE has no exec path, so the route cut also blinds a poll from the harness: re
 the cloud's 3/7 during the cut from the Crane app logs (Application logs in the
 console) and note it; the harness captures the edge side authoritatively.
 
-### C.5 optional: measure bytes on the wire
+### C.5 measured footprint (bytes, CPU, RSS, P99, energy)
 
-Add `MEASURE_BYTES=1` (needs root/iptables on the edge host) to record the telemetry
-bytes crossing to the cloud per event; `compare_prod.sh` then adds the +/-20% bytes
-check. Where the edge host cannot see the counter, leave it off and bytes stay NA
-(disclosed, not inferred).
+The cloud collector counts the real telemetry bytes it receives, times each ingest
+handler, and reads its own resident memory and CPU, all exposed on `GET /status`
+(`bytes_in`, `p99_handler_us`, `rss_kb`, `cpu_ms`). `run_events_mesh.sh` records a
+`cross_bytes`, `cpu_ms`, `rss_kb` and `p99_handler_us` column per event with no root
+or iptables, and `compare_prod.sh` prints the measured footprint block. The sim's
+per-sample byte constant is itself measured from the same JSON record (a test in
+`crates/sim/src/model.rs` checks it), so bytes are a measurement on both sides.
+
+Energy is separate because reading Intel RAPL needs privilege:
+
+```bash
+make energy        # sudo; writes results/analysis/energy.txt (joules per diagnosis)
+```
 
 ---
 
@@ -156,11 +267,34 @@ scope the claim rather than hiding it (the examiner's rule).
 
 ---
 
+## E. External dataset validation (the detector on independent data)
+
+To answer "the simulator embodies the detector's assumptions", run the SAME detector
+and the SAME four rankers on an external benchmark with labelled root causes. The
+`rca_bench` binary targets the RCAEval datasets (arXiv 2412.17015):
+
+```bash
+make bench DIR=<dataset-root>          # METRIC=latency by default
+# or: ./target/release/rca_bench --dir <dataset-root> --metric latency \
+#       --out results/analysis/summary_ext.csv
+```
+
+Each case subdirectory needs a `metrics.csv` (a header row, then numeric rows; a
+leading `time` column is ignored; columns `<service>_<metric>` collapse to one series
+per service), an optional `graph.csv` (`caller,callee[,weight]` for the call graph the
+graph rankers walk), and the root-cause service name in `label.txt`. Download RCAEval's
+data with its own tooling (`pip install RCAEval` then its `download_data`), and point
+`--dir` at the extracted cases, converting column names to the `<service>_<metric>`
+form if needed. The output `summary_ext.csv` reports top-1 and top-3 per ranker, so PPR
+is scored against argmax, BARO and the random-walk baseline on real data.
+
+---
+
 ## Honest limits (documented, not fabricated)
 
 - Cloud-side faults on the remote tiers need remote injection; the harness injects
   edge-side faults there (the symmetric cloud-fault cost is shown in the simulation,
   E1). Single-node faults any of the seven.
-- Second-coder Cohen's kappa (E9), Raspberry-Pi energy (E4, no power meter), and an
-  uncontrolled rural/mobile link (E8) are not run here; each has a protocol and stays
-  an honest limitation.
+- Energy is measured on this x86 host via Intel RAPL (`make energy`); a Raspberry-Pi
+  power-meter run (E4) and an uncontrolled rural/mobile link (E8) remain documented
+  protocols. Second-coder Cohen's kappa (E9) stays an honest limitation.

@@ -1,75 +1,94 @@
-# SovLoc on OpenStack (two VMs: edge + cloud)
+# SovLoc on OpenStack (Kolla-Ansible all-in-one, VM-per-edge)
 
-This tier runs the same edge/cloud service split on an OpenStack project you can
-launch instances in (CoCIS OpenStack). The cloud half runs on a **cloud VM**,
-genuinely remote from the **edge VM**, and the partition cuts the link between
-them. During the cut the cloud collector still sees its three local cloud services
-(3/7), so "cloud sees 0/7" is a measured outcome, not a topology guarantee.
+The OpenStack E6 tier the examiner asked for: a genuine OpenStack cloud, not a
+position "from the literature". A single-host **Kolla-Ansible** all-in-one (the
+examiner names Kolla-Ansible on a CoCIS server; here it runs on the project laptop)
+on which the **full** multi-edge mesh -- the same `scenarios/five-edge-100.yaml`
+used by the single-node and k3s tiers -- runs across **real VMs, one VM per edge
+device plus a cloud VM**. A partition is a real in-VM network cut.
 
 ```
-edge VM (4 edge services + edge collector, runs the harness)
-     |  private network (10.0.0.0/24)
-     |  <-- partition: route black-hole, or security-group / iptables cut -->
-cloud VM (cloud collector + enrich, store, alerting)   <-- CLOUD_URL = http://<cloud-ip>:8080
+edge-1 VM (20 svc + collector) --\
+edge-2 VM (15 svc + collector) ---\
+edge-3 VM (25 svc + collector) ----+--> cloud VM (cloud collector + 3 cloud svc)
+edge-4 VM (18 svc + collector) ---/        ^
+edge-5 VM (22 svc + collector) --/         |  reached from the host through the
+   tenant network 10.0.0.0/24 (neutron)    |  neutron qdhcp namespace (no floating IPs)
+   partition = `ip route add blackhole <cloud-ip>` inside the edge VM (severs that device -> cloud)
 ```
 
-## 1. Launch two instances
+103 services across six VMs. The mesh is the **static musl** binary run natively on
+the tiny cirros guests (`cargo build --release -p mesh --target x86_64-unknown-linux-musl`),
+pushed in over SSH; the host reaches the VMs through the neutron DHCP namespace
+(`sudo ip netns exec qdhcp-<net-id> ssh|curl ...`), so no floating IPs are needed.
 
-- Image: Ubuntu 22.04/24.04. Flavor: 1 vCPU / 2 GB is plenty.
-- Same project and private network; note each VM's private IP (e.g. edge
-  `10.0.0.11`, cloud `10.0.0.12`). Give the edge VM a floating IP so you can SSH in.
-- Install Docker on both: `sudo apt-get update && sudo apt-get install -y docker.io && sudo usermod -aG docker $USER` (re-login).
-- On the edge VM, also install Rust (or copy the `mesh` binary) and clone the repo,
-  because the edge half and the harness run there.
+## 1. Stand up OpenStack (once)
 
-## 2. Build and push the image (once, from your workstation)
+Kolla-Ansible 2025.1 on Ubuntu 24.04, all-in-one, trimmed to keystone/glance/
+placement/nova/neutron (no cinder/heat/horizon) and **HAProxy disabled** (a single
+node has no spare VIP; services bind the management interface directly). A private
+dummy interface `mgmt0` (10.10.10.1/24) carries the management network so no address
+on the real LAN is needed; `eno1` is the neutron external interface. Host prep that
+bit us, all disabled/masked before `deploy`: system mysql, rabbitmq, epmd (:4369),
+memcached, libvirt (Kolla runs its own). Verify:
 
 ```bash
-DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v2
+source ~/kolla-venv/bin/activate
+export OS_CLIENT_CONFIG_FILE=/etc/kolla/clouds.yaml OS_CLOUD=kolla-admin
+openstack compute service list      # nova-* up
+openstack network agent list        # neutron agents :-)
 ```
 
-## 3. Cloud VM: run the cloud half
+## 2. Experiment resources (once)
 
 ```bash
-# on the cloud VM
-IMAGE=<dockerhub-user>/sovloc-mesh:v2 ./deploy/openstack/run_cloud_half.sh
-curl -s http://127.0.0.1:8080/healthz    # expect: ok
+openstack flavor create --ram 512  --vcpus 2 --disk 3 sovloc.e   # edge VMs
+openstack flavor create --ram 1024 --vcpus 2 --disk 3 sovloc.c   # cloud VM
+openstack network create sovloc-net
+openstack subnet create sovloc-subnet --network sovloc-net --subnet-range 10.0.0.0/24 --dns-nameserver 8.8.8.8
+openstack keypair create sovloc-key > ~/kolla/sovloc-key.pem && chmod 600 ~/kolla/sovloc-key.pem
+openstack security group create sovloc-sg
+openstack security group rule create --proto tcp --dst-port 1:65535 --remote-ip 10.0.0.0/24 sovloc-sg
+openstack security group rule create --proto tcp --dst-port 22 sovloc-sg
+openstack security group rule create --proto icmp sovloc-sg
+openstack image create cirros --disk-format qcow2 --container-format bare --public \
+  --file <(curl -sL http://download.cirros-cloud.net/0.6.2/cirros-0.6.2-x86_64-disk.img)
+openstack server create --flavor sovloc.c --image cirros --network sovloc-net \
+  --security-group sovloc-sg --key-name sovloc-key cloud-vm
+for n in 1 2 3 4 5; do
+  openstack server create --flavor sovloc.e --image cirros --network sovloc-net \
+    --security-group sovloc-sg --key-name sovloc-key edge$n-vm; done
 ```
 
-Open **8080/tcp from the edge VM** in the cloud VM's security group:
+## 3. Run >= 30 events and compare
 
 ```bash
-openstack security group rule create --proto tcp --dst-port 8080 \
-  --remote-ip 10.0.0.0/24 <cloud-vm-security-group>
-```
-
-## 4. Edge VM: calibrate, then run >= 30 partition events
-
-```bash
-# on the edge VM, in the repo
-cargo build --release -p mesh
-CLOUD=http://10.0.0.12:8080
-
-PLATFORM=openstack CLOUD_URL=$CLOUD scripts/e6/calibrate.sh
-
-# default cut = real route black-hole to the cloud VM (network-level, self-healing)
-PLATFORM=openstack CLOUD_URL=$CLOUD EVENTS=30 scripts/e6/run_events.sh
-```
-
-To instead cut at the cloud VM's firewall (keeps edge routing intact), use:
-
-```bash
-CLOUD_SSH=ubuntu@10.0.0.12 EDGE_IP=10.0.0.11 CLOUD_PORT=8080 \
-PLATFORM=openstack CLOUD_URL=$CLOUD EVENTS=30 \
-  CUT_CMD='scripts/e6/cut_openstack.sh __PSEC__' scripts/e6/run_events.sh
-```
-
-## 5. Compare against the simulation
-
-```bash
+# the VMs should be freshly booted (see note below)
+SCENARIO=scenarios/five-edge-100.yaml EVENTS=30 scripts/e6/run_events_openstack.sh
 scripts/e6/compare_prod.sh results/production/openstack.csv
 ```
 
-Reports edge time-to-diagnosis (median, P95) and cloud-blind rate with Wilson
-intervals, and the +/-20% sim-vs-production check on the calibrated scale. Commit
-`results/production/openstack.csv` and `results/production/openstack_calib.txt`.
+The harness is scenario-driven: it derives the VM set from the scenario, deploys the
+mesh (one batched SSH per VM, not one per service), injects a random culprit each
+event, cuts the culprit's device from the cloud with a blackhole route for the
+device's partition length, polls each collector's `/status`, heals, and writes one
+row (same schema as the Docker/k8s tiers).
+
+Two conditions matter at full scale (103 services on six laptop VMs) and are handled
+by the harness; miss either and localisation is silently poisoned:
+
+- **Clean boot.** Run on freshly booted VMs. Redeploying over a still-running mesh
+  leaves a stale collector/baseline that survives even a hard kill of the processes.
+  `openstack server reboot <vm>` the six VMs before a run.
+- **Readiness before baseline.** The 100+ cross-VM connections take ~20-30 s to all
+  come up; the harness waits until the cloud sees ~all services before the per-service
+  baselines freeze, so a late-connecting service still gets a clean baseline.
+
+## What this tier shows
+
+The same full multi-edge result as the dedicated tiers, on a real OpenStack: the edge
+collector localises its device's fault during the cut (time to diagnosis a few hundred
+ms), the cloud is blind during every edge-fault cut, and the cloud loses **exactly**
+the cut device's services (`cloud_min_visible` = 103 minus that device's size: 78 for
+edge-3's 25, 83 for edge-1's 20, 85 for edge-4's 18, 81 for edge-5's 22, 88 for
+edge-2's 15). See `scripts/e6/compare_prod.sh results/production/openstack.csv`.

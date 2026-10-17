@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 description = "Deterministic, seeded simulation harness comparing centralised vs decentralised RCA under network partition."
 license = "MIT"
+# The crate ships several binaries (sim, analysis, rca_bench); `cargo run -p sim`
+# runs the experiment driver by default.
+default-run = "sim"
 
 [[bin]]
 name = "sim"
@@ -11,6 +14,7 @@ path = "src/main.rs"
 
 [dependencies]
 rca-core   = { path = "../rca-core" }
+scenario   = { path = "../scenario" }
 rand       = { workspace = true }
 rand_distr = { workspace = true }
 serde      = { workspace = true }

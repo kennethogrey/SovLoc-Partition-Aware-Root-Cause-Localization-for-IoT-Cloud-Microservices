@@ -415,6 +415,7 @@ dependencies = [
  "rand",
  "rand_distr",
  "rca-core",
+ "scenario",
  "serde",
 ]
 

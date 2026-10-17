@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="534" height="450" viewBox="0 0 534 450" font-family="Helvetica,Arial,sans-serif">
+<rect width="534" height="450" fill="white"/>
+<text x="284" y="22" text-anchor="middle" font-size="15">Edge-fault time to diagnosis vs edge-device partition</text>
+<line x1="64.0" y1="340.0" x2="504.0" y2="340.0" stroke="#e6e6e6"/>
+<text x="58.0" y="343.0" text-anchor="end" font-size="11">1</text>
+<line x1="64.0" y1="265.0" x2="504.0" y2="265.0" stroke="#e6e6e6"/>
+<text x="58.0" y="268.0" text-anchor="end" font-size="11">10</text>
+<line x1="64.0" y1="190.0" x2="504.0" y2="190.0" stroke="#e6e6e6"/>
+<text x="58.0" y="193.0" text-anchor="end" font-size="11">100</text>
+<line x1="64.0" y1="115.0" x2="504.0" y2="115.0" stroke="#e6e6e6"/>
+<text x="58.0" y="118.0" text-anchor="end" font-size="11">1000</text>
+<line x1="64.0" y1="40.0" x2="504.0" y2="40.0" stroke="#e6e6e6"/>
+<text x="58.0" y="43.0" text-anchor="end" font-size="11">10000</text>
+<line x1="137.3" y1="340.0" x2="137.3" y2="344.0" stroke="#cccccc"/>
+<text x="137.3" y="358.0" text-anchor="middle" font-size="11">10</text>
+<line x1="210.7" y1="340.0" x2="210.7" y2="344.0" stroke="#cccccc"/>
+<text x="210.7" y="358.0" text-anchor="middle" font-size="11">20</text>
+<line x1="284.0" y1="340.0" x2="284.0" y2="344.0" stroke="#cccccc"/>
+<text x="284.0" y="358.0" text-anchor="middle" font-size="11">30</text>
+<line x1="357.3" y1="340.0" x2="357.3" y2="344.0" stroke="#cccccc"/>
+<text x="357.3" y="358.0" text-anchor="middle" font-size="11">40</text>
+<line x1="504.0" y1="340.0" x2="504.0" y2="344.0" stroke="#cccccc"/>
+<text x="504.0" y="358.0" text-anchor="middle" font-size="11">60</text>
+<rect x="64.0" y="40.0" width="440.0" height="300.0" fill="none" stroke="#333"/>
+<text x="284.0" y="378.0" text-anchor="middle" font-size="12">Edge-device partition length (s)</text>
+<text x="18.0" y="190.0" text-anchor="middle" font-size="12" transform="rotate(-90 18.0 190.0)">Median time to diagnosis (steps)</text>
+<path d="M137.3,193.4 L210.7,169.1 L284.0,155.3 L357.3,145.7 L504.0,132.2" fill="none" stroke="#8c8c8c" stroke-width="1.8"/>
+<circle cx="137.3" cy="193.4" r="3" fill="#8c8c8c"/>
+<circle cx="210.7" cy="169.1" r="3" fill="#8c8c8c"/>
+<circle cx="284.0" cy="155.3" r="3" fill="#8c8c8c"/>
+<circle cx="357.3" cy="145.7" r="3" fill="#8c8c8c"/>
+<circle cx="504.0" cy="132.2" r="3" fill="#8c8c8c"/>
+<path d="M137.3,193.4 L210.7,169.1 L284.0,155.3 L357.3,145.7 L504.0,132.2" fill="none" stroke="#d62728" stroke-width="1.8"/>
+<circle cx="137.3" cy="193.4" r="3" fill="#d62728"/>
+<circle cx="210.7" cy="169.1" r="3" fill="#d62728"/>
+<circle cx="284.0" cy="155.3" r="3" fill="#d62728"/>
+<circle cx="357.3" cy="145.7" r="3" fill="#d62728"/>
+<circle cx="504.0" cy="132.2" r="3" fill="#d62728"/>
+<path d="M137.3,340.0 L210.7,340.0 L284.0,340.0 L357.3,340.0 L504.0,340.0" fill="none" stroke="#1f77b4" stroke-width="1.8"/>
+<circle cx="137.3" cy="340.0" r="3" fill="#1f77b4"/>
+<circle cx="210.7" cy="340.0" r="3" fill="#1f77b4"/>
+<circle cx="284.0" cy="340.0" r="3" fill="#1f77b4"/>
+<circle cx="357.3" cy="340.0" r="3" fill="#1f77b4"/>
+<circle cx="504.0" cy="340.0" r="3" fill="#1f77b4"/>
+<path d="M137.3,340.0 L210.7,340.0 L284.0,340.0 L357.3,340.0 L504.0,340.0" fill="none" stroke="#2ca02c" stroke-width="1.8"/>
+<circle cx="137.3" cy="340.0" r="3" fill="#2ca02c"/>
+<circle cx="210.7" cy="340.0" r="3" fill="#2ca02c"/>
+<circle cx="284.0" cy="340.0" r="3" fill="#2ca02c"/>
+<circle cx="357.3" cy="340.0" r="3" fill="#2ca02c"/>
+<circle cx="504.0" cy="340.0" r="3" fill="#2ca02c"/>
+<circle cx="64.0" cy="400.0" r="4" fill="#8c8c8c"/>
+<text x="74.0" y="404.0" font-size="12">central naive</text>
+<circle cx="254.0" cy="400.0" r="4" fill="#d62728"/>
+<text x="264.0" y="404.0" font-size="12">central store-and-forward</text>
+<circle cx="64.0" cy="400.0" r="4" fill="#1f77b4"/>
+<text x="74.0" y="404.0" font-size="12">edge local</text>
+<circle cx="254.0" cy="400.0" r="4" fill="#2ca02c"/>
+<text x="264.0" y="404.0" font-size="12">hybrid</text>
+<text x="64.0" y="426.0" font-size="11" fill="#555">Hollow marker: median not reached within the run (censored).</text>
+</svg>
