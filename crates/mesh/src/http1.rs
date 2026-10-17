@@ -13,7 +13,29 @@
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
+use tokio::net::{TcpSocket, TcpStream};
+
+/// Connect to `host:port`, optionally binding a local source IP first so the
+/// wide-area per-device cut can route each edge device out through its own address.
+async fn connect_from(host: &str, port: u16, bind: Option<&str>) -> std::io::Result<TcpStream> {
+    use std::net::{IpAddr, SocketAddr};
+    let dest: SocketAddr = tokio::net::lookup_host((host, port))
+        .await?
+        .next()
+        .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "no address for host"))?;
+    let socket = if dest.is_ipv4() {
+        TcpSocket::new_v4()?
+    } else {
+        TcpSocket::new_v6()?
+    };
+    if let Some(b) = bind {
+        let src: IpAddr = b.parse().map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "bad --http-bind IP")
+        })?;
+        socket.bind(SocketAddr::new(src, 0))?;
+    }
+    socket.connect(dest).await
+}
 
 /// A parsed HTTP request: only the method, path, and body the collector needs.
 pub struct Req {
@@ -117,19 +139,22 @@ pub struct HttpSender {
     host: String,
     port: u16,
     base: String,
+    bind: Option<String>,
     conn: Option<TcpStream>,
 }
 
 impl HttpSender {
     /// Build a sender for a plain `http://host[:port][/base]` URL, or `None` if
     /// the URL is not plain http (an https URL needs TLS the platform terminates
-    /// at its ingress; point at the platform's http endpoint instead).
-    pub fn new(base_url: &str) -> Option<Self> {
+    /// at its ingress; point at the platform's http endpoint instead). `bind` is an
+    /// optional local source IP to connect from (the wide-area per-device cut).
+    pub fn new(base_url: &str, bind: Option<String>) -> Option<Self> {
         let (host, port, base) = parse_http_url(base_url)?;
         Some(Self {
             host,
             port,
             base,
+            bind,
             conn: None,
         })
     }
@@ -137,7 +162,7 @@ impl HttpSender {
     /// POST a JSON body to `<base><path>` over the reused connection.
     pub async fn post(&mut self, path: &str, body: &str) -> std::io::Result<()> {
         if self.conn.is_none() {
-            self.conn = Some(TcpStream::connect((self.host.as_str(), self.port)).await?);
+            self.conn = Some(connect_from(&self.host, self.port, self.bind.as_deref()).await?);
         }
         let target = format!("{}{}", self.base.trim_end_matches('/'), path);
         let req = format!(

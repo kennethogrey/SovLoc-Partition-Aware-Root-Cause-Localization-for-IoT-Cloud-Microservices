@@ -259,6 +259,12 @@ struct ServiceArgs {
     /// edge collector, which is exactly the partition behaviour.
     #[arg(long)]
     http_cloud: Option<String>,
+    /// Optional local source IP to bind the `--http-cloud` connection to. Lets the
+    /// Crane Cloud (wide-area) tier route each edge device's telemetry out through
+    /// its own address, so a per-device partition can drop one device's traffic to
+    /// the cloud while the harness still reaches the cloud over the host's address.
+    #[arg(long)]
+    http_bind: Option<String>,
     /// Report period in ms.
     #[arg(long, default_value_t = 200)]
     period_ms: u64,
@@ -865,8 +871,11 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
                     conn = None;
                 }
                 if conn.is_none() {
-                    match tokio::time::timeout(Duration::from_millis(300), TcpStream::connect(&addr))
-                        .await
+                    match tokio::time::timeout(
+                        Duration::from_millis(300),
+                        TcpStream::connect(&addr),
+                    )
+                    .await
                     {
                         Ok(Ok(s)) => {
                             conn = Some(s);
@@ -895,7 +904,7 @@ async fn run_service(a: ServiceArgs) -> Result<()> {
     // blocks on the WAN link. A small bounded channel sheds samples while the link
     // is down instead of flooding stale telemetry on heal.
     let cloud_tx = a.http_cloud.as_ref().and_then(|base| {
-        let mut sender = http1::HttpSender::new(base)?;
+        let mut sender = http1::HttpSender::new(base, a.http_bind.clone())?;
         let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(16);
         tokio::spawn(async move {
             while let Some(line) = rx.recv().await {
