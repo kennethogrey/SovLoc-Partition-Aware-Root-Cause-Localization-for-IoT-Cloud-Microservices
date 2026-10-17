@@ -107,10 +107,13 @@ Two cluster facts the harness depends on, both learned the hard way:
 - **A NetworkPolicy only blocks NEW connections.** The mesh service holds one
   persistent telemetry stream, so an egress cut alone would ride the established
   socket and the cloud would never go blind. `gen-k8s` therefore starts every
-  service with `--conn-recycle-ms 1000`, so the service reopens its cloud socket
-  each second and the reopen fails during the cut. The Docker tier needs none of
-  this (its `network disconnect` severs the socket directly), and keeps the default
-  `--conn-recycle-ms 0`.
+  service with `--conn-recycle-ms 1200`, so the service reopens its cloud socket and
+  the reopen fails during the cut. The harness injects the fault 1500 ms after it
+  applies the cut (LEAD_MS), which beats the recycle window plus one 200 ms report
+  interval, so every pre-cut stream is re-blocked before the fault is visible and the
+  cloud is blind on every event, while the recycle stays loose enough not to inflate
+  the edge diagnosis time. The Docker tier needs none of this (its `network
+  disconnect` severs the socket directly), and keeps the default `--conn-recycle-ms 0`.
 
 The harness now also **self-tests the data path before writing any rows** (it probes
 `cloud` and one edge `/status` through the control pod and aborts, writing no CSV, if
@@ -119,23 +122,25 @@ the namespace can hang for minutes when a cluster add-on's aggregated API is
 unhealthy, e.g. a crash-looping metrics-server stalls `metrics.k8s.io` discovery and
 the namespace garbage-collector with it).
 
-Get the image into the cluster, then run:
+Build the image from source (it carries the `--conn-recycle-ms` flag; no pushed tag
+does) and get it into the cluster, then run:
 
 ```bash
-# build + push once (the clusters pull it; v8 carries the connection-recycle fix)
-DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v8
+# build from source and import into k3s's containerd (no registry pull; PULL=Never).
+# add `--network host` to the build if a local OpenStack/Kolla broke the docker bridge.
+docker build -t sovloc-mesh:local .
+docker save sovloc-mesh:local | sudo k3s ctr images import -
 
-# --- k3s (pull from the registry; no sudo image import needed) ---
+# --- k3s (uses the imported local image) ---
 SCENARIO=scenarios/five-edge-100.yaml NAMESPACE=sovloc PLATFORM=k3s EVENTS=30 \
-  K8S_IMAGE=<dockerhub-user>/sovloc-mesh:v8 IMAGE_PULL_POLICY=IfNotPresent \
+  K8S_IMAGE=sovloc-mesh:local IMAGE_PULL_POLICY=Never \
   scripts/e6/run_events_k8s.sh
 scripts/e6/compare_prod.sh results/production/k3s.csv
-
-# --- OpenStack k8s / Crane Cloud (same command, point kubeconfig at the cluster) ---
-SCENARIO=scenarios/five-edge-100.yaml NAMESPACE=sovloc PLATFORM=openstack EVENTS=30 \
-  K8S_IMAGE=<dockerhub-user>/sovloc-mesh:v8 scripts/e6/run_events_k8s.sh
-scripts/e6/compare_prod.sh results/production/openstack.csv
 ```
+
+The OpenStack and Crane Cloud tiers have their own harnesses (`run_events_openstack.sh`
+over Kolla VMs, `run_events_cranecloud.sh` over the real Internet); see their sections
+below.
 
 The harness deploys `mesh.yaml`, injects and polls `/status` through the control
 pod (`kubectl exec deploy/sovloc-control -- mesh status --url ...`), and tears the
