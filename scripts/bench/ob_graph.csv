@@ -1,0 +1,17 @@
+caller,callee
+frontend,adservice
+frontend,cartservice
+frontend,checkoutservice
+frontend,currencyservice
+frontend,productcatalogservice
+frontend,recommendationservice
+frontend,shippingservice
+checkoutservice,cartservice
+checkoutservice,currencyservice
+checkoutservice,emailservice
+checkoutservice,paymentservice
+checkoutservice,productcatalogservice
+checkoutservice,shippingservice
+recommendationservice,productcatalogservice
+cartservice,redis
+frontend-external,frontend

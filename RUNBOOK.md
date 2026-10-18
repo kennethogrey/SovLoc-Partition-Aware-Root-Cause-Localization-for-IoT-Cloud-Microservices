@@ -269,24 +269,31 @@ scope the claim rather than hiding it (the examiner's rule).
 
 ## E. External dataset validation (the detector on independent data)
 
-To answer "the simulator embodies the detector's assumptions", run the SAME detector
-and the SAME four rankers on an external benchmark with labelled root causes. The
-`rca_bench` binary targets the RCAEval datasets (arXiv 2412.17015):
+To answer "the simulator embodies the detector's assumptions", the SAME detector and
+the SAME four rankers are scored on an external benchmark with labelled root causes. The
+RCAEval RE1-OB dataset (Online Boutique, metric level; arXiv 2412.17015) is **bundled in
+the repository** at `data/rcaeval/RE1-OB.zip`, so a fresh clone needs no download:
 
 ```bash
-make bench DIR=<dataset-root>          # METRIC=latency by default
-# or: ./target/release/rca_bench --dir <dataset-root> --metric latency \
-#       --out results/analysis/summary_ext.csv
+make bench            # unzips the bundled dataset, lays out 125 cases, scores every ranker
 ```
 
-Each case subdirectory needs a `metrics.csv` (a header row, then numeric rows; a
-leading `time` column is ignored; columns `<service>_<metric>` collapse to one series
-per service), an optional `graph.csv` (`caller,callee[,weight]` for the call graph the
-graph rankers walk), and the root-cause service name in `label.txt`. Download RCAEval's
-data with its own tooling (`pip install RCAEval` then its `download_data`), and point
-`--dir` at the extracted cases, converting column names to the `<service>_<metric>`
-form if needed. The output `summary_ext.csv` reports top-1 and top-3 per ranker, so PPR
-is scored against argmax, BARO and the random-walk baseline on real data.
+`make bench` (also run as part of `make reproduce`) unzips `data/rcaeval/RE1-OB.zip` under
+`target/` (gitignored), runs `scripts/bench/prepare_re1ob.sh` to lay the 125 cases out for
+`rca_bench` (it normalises the `latency-50` column to `latency` and attaches the known
+Online Boutique call graph in `scripts/bench/ob_graph.csv`), and writes
+`results/analysis/summary_ext.csv`. The result: PPR reaches 44.8% top-1 / 71.2% top-3
+across the 125 cases, ahead of argmax and BARO (38.4%) and the random walk (36.8%), which
+is the external-benchmark number quoted in Section VIII of the manuscript.
+
+To score a different dataset, pass `DIR=<root>` (and `METRIC=<name>`) where each case
+subdirectory holds a `metrics.csv` (a header row then numeric rows; a leading `time`
+column is ignored; `<service>_<metric>` columns collapse to one series per service), an
+optional `graph.csv` (`caller,callee[,weight]`), and the root-cause service in `label.txt`:
+
+```bash
+make bench DIR=<dataset-root> METRIC=latency
+```
 
 ---
 

@@ -1,0 +1,5 @@
+ranker,cases,top1_pct,top3_pct
+argmax,125,38.4,70.4
+baro,125,38.4,69.6
+random-walk,125,36.8,68.8
+ppr,125,44.8,71.2
