@@ -138,7 +138,6 @@ fn fault_str(f: FaultKind) -> &'static str {
 fn ranker_str(r: Ranker) -> &'static str {
     match r {
         Ranker::Argmax => "argmax",
-        Ranker::Baro => "baro",
         Ranker::RandomWalk => "random-walk",
         Ranker::Ppr => "ppr",
     }
@@ -231,14 +230,15 @@ fn experiment_e1(base: u64, reps: usize) -> Vec<Row> {
     rows
 }
 
-/// E2: topologies x faults x {argmax, baro, random-walk, ppr}, the detector never
-/// told the onset. This is the ranker ablation, so it runs on FULLY OBSERVED views
+/// E2: topologies x faults x {argmax, random-walk, ppr}, the detector never told
+/// the onset. This is the graph ablation, so it runs on FULLY OBSERVED views
 /// (no partition): every ranker sees the identical, complete telemetry for a given
 /// seed (paired), and the only things that vary are the ranker and the
 /// topology/fault structure. (Degraded observation under a partition is the subject
 /// of E1/EM/E5, not of the ranker comparison; mixing it in would conflate ranking
-/// skill with whether the collector could see the culprit at all.) argmax and BARO
-/// are graph-blind, random-walk is the undirected graph baseline, PPR is ours.
+/// skill with whether the collector could see the culprit at all.) argmax is
+/// graph-blind, random-walk is the undirected graph baseline, PPR is ours; the
+/// published BARO and CIRCA comparators run on the external RCAEval benchmark.
 fn experiment_e2(base: u64, reps: usize) -> Vec<Row> {
     let mut rows = Vec::new();
     let topos = [
@@ -261,12 +261,7 @@ fn experiment_e2(base: u64, reps: usize) -> Vec<Row> {
             for culprit in 0..services {
                 for rep in 0..reps {
                     let seed = base + cell * 10_000 + rep as u64;
-                    for ranker in [
-                        Ranker::Argmax,
-                        Ranker::Baro,
-                        Ranker::RandomWalk,
-                        Ranker::Ppr,
-                    ] {
+                    for ranker in [Ranker::Argmax, Ranker::RandomWalk, Ranker::Ppr] {
                         let mut p = base_params(seed, culprit);
                         p.kind = kind;
                         p.fault = fault;

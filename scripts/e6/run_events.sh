@@ -29,7 +29,7 @@
 #   PLATFORM=single-node EVENTS=30 scripts/e6/run_events.sh
 #   PLATFORM=k3s      CLOUD_URL=http://<cloud-np>:8080 CUT_CMD='scripts/e6/cut_k3s.sh __PSEC__'       EVENTS=30 scripts/e6/run_events.sh
 #   PLATFORM=openstack CLOUD_URL=http://<cloud-vm>:8080 CUT_CMD='scripts/e6/cut_openstack.sh __PSEC__' EVENTS=30 scripts/e6/run_events.sh
-#   PLATFORM=cranecloud CLOUD_URL=http://<app>.cranecloud.io CUT_CMD='sudo scripts/e6/cut_cranecloud.sh __CLOUD__ __PSEC__' EVENTS=30 scripts/e6/run_events.sh
+#   PLATFORM=cranecloud: use the dedicated two terminal flow in scripts/cranecloud/ (run_edge_local.sh, then in a second terminal sudo scripts/cranecloud/partition_link.sh <public-url> <after_sec> <dur_sec>); see scripts/cranecloud/README.md and RUNBOOK.md
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"; cd "$ROOT"
 

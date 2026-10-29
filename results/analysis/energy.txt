@@ -1,10 +1,10 @@
 runs=50000
-seconds=37.268
-joules=989.057
-watts=26.54
-idle_watts=15.00
-marginal_joules=430.022
+seconds=36.550
+joules=933.443
+watts=25.54
+idle_watts=14.37
+marginal_joules=408.374
 diagnosed=50000
-joules_per_diagnosis_total=0.019781
-joules_per_diagnosis_marginal=0.008600
+joules_per_diagnosis_total=0.018669
+joules_per_diagnosis_marginal=0.008167
 note=Package energy via Intel RAPL over the full localization pipeline (synthetic metric generation plus detector plus ranker); the marginal figure subtracts idle package draw and is the cost attributable to the work.

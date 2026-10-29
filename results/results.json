@@ -1,0 +1,470 @@
+{
+  "schema": "sovloc-results/1",
+  "note": "Single machine-readable source for headline numbers. Every byte or latency figure is tagged with the configuration it was measured under. The simulation samples at 10 Hz (one step = 100 ms of simulated time); the production collectors tick at 2 Hz (one tick = 500 ms).",
+  "sim_step_ms": 100,
+  "production_tick_ms": 500,
+  "runs": {
+    "total": 17288,
+    "e1": 5040
+  },
+  "survival": {
+    "central_sf_edge_slope_steps_per_step": 0.662,
+    "edge_local_edge_slope_steps_per_step": -0.0,
+    "tost_diff": 0.0,
+    "tost_p": 0.0,
+    "logrank_chi2": 89.5,
+    "logrank_p": 0.001,
+    "longest_partition_sec": 640.0
+  },
+  "ranking_internal_topologies": {
+    "ppr_minus_argmax_pct": 4.2,
+    "ppr_minus_argmax_p": 0.001,
+    "ppr_minus_randomwalk_pct": 4.1,
+    "ppr_minus_randomwalk_p": 0.001
+  },
+  "rcaeval_external": {
+    "dataset": "RCAEval RE1-OB, 125 cases, service level",
+    "methods": {
+      "argmax": {
+        "cases": 125,
+        "top1_pct": 38.4,
+        "top3_pct": 70.4,
+        "avg5_pct": 66.7,
+        "ppr_minus_this_top1": 6.4,
+        "ci_lo": -0.8,
+        "ci_hi": 13.6,
+        "p_holm": 0.1116,
+        "reject_0.05": false
+      },
+      "random-walk": {
+        "cases": 125,
+        "top1_pct": 36.8,
+        "top3_pct": 68.8,
+        "avg5_pct": 64.2,
+        "ppr_minus_this_top1": 8.0,
+        "ci_lo": 0.0,
+        "ci_hi": 16.0,
+        "p_holm": 0.1116,
+        "reject_0.05": false
+      },
+      "ppr": {
+        "cases": 125,
+        "top1_pct": 44.8,
+        "top3_pct": 71.2,
+        "avg5_pct": 69.4,
+        "ppr_minus_this_top1": null,
+        "ci_lo": null,
+        "ci_hi": null,
+        "p_holm": null,
+        "reject_0.05": false
+      },
+      "baro": {
+        "cases": 125,
+        "top1_pct": 16.8,
+        "top3_pct": 24.8,
+        "avg5_pct": 25.6,
+        "ppr_minus_this_top1": 28.0,
+        "ci_lo": 16.8,
+        "ci_hi": 40.0,
+        "p_holm": 0.0,
+        "reject_0.05": true
+      },
+      "nsigma": {
+        "cases": 125,
+        "top1_pct": 10.4,
+        "top3_pct": 23.2,
+        "avg5_pct": 22.7,
+        "ppr_minus_this_top1": 34.4,
+        "ci_lo": 24.0,
+        "ci_hi": 44.8,
+        "p_holm": 0.0,
+        "reject_0.05": true
+      },
+      "circa": {
+        "cases": 125,
+        "top1_pct": 11.2,
+        "top3_pct": 21.6,
+        "avg5_pct": 21.9,
+        "ppr_minus_this_top1": 33.6,
+        "ci_lo": 22.4,
+        "ci_hi": 44.8,
+        "p_holm": 0.0,
+        "reject_0.05": true
+      }
+    }
+  },
+  "bytes": {
+    "base_7svc_10hz": {
+      "central_sf_bytes": 135200.0,
+      "edge_local_bytes": 62441.0,
+      "hybrid_bytes": 82.0,
+      "ratio_sf_over_edge": 2.2,
+      "ratio_sf_over_hybrid": 1649.0,
+      "config": "7 services, 10 Hz sampling, single edge"
+    },
+    "multiedge_103svc": {
+      "central_naive_kb": 2835.6,
+      "central_sf_kb": 4631.9,
+      "edge_local_kb": 418.7,
+      "hybrid_kb": 0.2,
+      "ratio_sf_over_edge": 11.1,
+      "ratio_sf_over_hybrid": 19281.0,
+      "config": "103 services, 5 edge devices"
+    }
+  },
+  "multiedge": {
+    "services": 103,
+    "edge_devices": 5,
+    "central_naive_edge_slope_steps_per_sec": 6.67,
+    "edge_local_edge_slope_steps_per_sec": 0.0,
+    "placements": {
+      "central-naive": {
+        "n": 618,
+        "success_pct": 100.0,
+        "success_ci": [
+          99.4,
+          100.0
+        ],
+        "edge_median_ttd_steps": 190.0,
+        "edge_p95_ttd_steps": 600.0,
+        "edge_p99_ttd_steps": 600.0,
+        "cloud_median_ttd_steps": 1.0,
+        "mean_cross_kb": 2835.6
+      },
+      "central-sf": {
+        "n": 618,
+        "success_pct": 100.0,
+        "success_ci": [
+          99.4,
+          100.0
+        ],
+        "edge_median_ttd_steps": 190.0,
+        "edge_p95_ttd_steps": 600.0,
+        "edge_p99_ttd_steps": 600.0,
+        "cloud_median_ttd_steps": 1.0,
+        "mean_cross_kb": 4631.9
+      },
+      "edge-local": {
+        "n": 618,
+        "success_pct": 100.0,
+        "success_ci": [
+          99.4,
+          100.0
+        ],
+        "edge_median_ttd_steps": 1.0,
+        "edge_p95_ttd_steps": 2.0,
+        "edge_p99_ttd_steps": 2.0,
+        "cloud_median_ttd_steps": 90.0,
+        "mean_cross_kb": 418.7
+      },
+      "hybrid": {
+        "n": 618,
+        "success_pct": 100.0,
+        "success_ci": [
+          99.4,
+          100.0
+        ],
+        "edge_median_ttd_steps": 1.0,
+        "edge_p95_ttd_steps": 2.0,
+        "edge_p99_ttd_steps": 3.0,
+        "cloud_median_ttd_steps": 1.0,
+        "mean_cross_kb": 0.2
+      }
+    },
+    "devices": [
+      {
+        "device": "edge-1",
+        "size": 20,
+        "partition_sec": 10.0,
+        "placement": "central-naive",
+        "n": 120,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 90.0,
+        "mean_cross_kb": 679.2
+      },
+      {
+        "device": "edge-1",
+        "size": 20,
+        "partition_sec": 10.0,
+        "placement": "central-sf",
+        "n": 120,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 90.0,
+        "mean_cross_kb": 2031.2
+      },
+      {
+        "device": "edge-1",
+        "size": 20,
+        "partition_sec": 10.0,
+        "placement": "edge-local",
+        "n": 120,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 99.1
+      },
+      {
+        "device": "edge-1",
+        "size": 20,
+        "partition_sec": 10.0,
+        "placement": "hybrid",
+        "n": 120,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 0.2
+      },
+      {
+        "device": "edge-2",
+        "size": 15,
+        "partition_sec": 30.0,
+        "placement": "central-naive",
+        "n": 90,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 290.0,
+        "mean_cross_kb": 2596.2
+      },
+      {
+        "device": "edge-2",
+        "size": 15,
+        "partition_sec": 30.0,
+        "placement": "central-sf",
+        "n": 90,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 290.0,
+        "mean_cross_kb": 4570.3
+      },
+      {
+        "device": "edge-2",
+        "size": 15,
+        "partition_sec": 30.0,
+        "placement": "edge-local",
+        "n": 90,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 380.9
+      },
+      {
+        "device": "edge-2",
+        "size": 15,
+        "partition_sec": 30.0,
+        "placement": "hybrid",
+        "n": 90,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 0.2
+      },
+      {
+        "device": "edge-3",
+        "size": 25,
+        "partition_sec": 20.0,
+        "placement": "central-naive",
+        "n": 150,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 190.0,
+        "mean_cross_kb": 1486.6
+      },
+      {
+        "device": "edge-3",
+        "size": 25,
+        "partition_sec": 20.0,
+        "placement": "central-sf",
+        "n": 150,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 190.0,
+        "mean_cross_kb": 3300.8
+      },
+      {
+        "device": "edge-3",
+        "size": 25,
+        "partition_sec": 20.0,
+        "placement": "edge-local",
+        "n": 150,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 217.1
+      },
+      {
+        "device": "edge-3",
+        "size": 25,
+        "partition_sec": 20.0,
+        "placement": "hybrid",
+        "n": 150,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 0.2
+      },
+      {
+        "device": "edge-4",
+        "size": 18,
+        "partition_sec": 60.0,
+        "placement": "central-naive",
+        "n": 108,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 590.0,
+        "mean_cross_kb": 6404.8
+      },
+      {
+        "device": "edge-4",
+        "size": 18,
+        "partition_sec": 60.0,
+        "placement": "central-sf",
+        "n": 108,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 590.0,
+        "mean_cross_kb": 8378.9
+      },
+      {
+        "device": "edge-4",
+        "size": 18,
+        "partition_sec": 60.0,
+        "placement": "edge-local",
+        "n": 108,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 952.2
+      },
+      {
+        "device": "edge-4",
+        "size": 18,
+        "partition_sec": 60.0,
+        "placement": "hybrid",
+        "n": 108,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 0.2
+      },
+      {
+        "device": "edge-5",
+        "size": 22,
+        "partition_sec": 40.0,
+        "placement": "central-naive",
+        "n": 132,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 390.0,
+        "mean_cross_kb": 3865.7
+      },
+      {
+        "device": "edge-5",
+        "size": 22,
+        "partition_sec": 40.0,
+        "placement": "central-sf",
+        "n": 132,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 390.0,
+        "mean_cross_kb": 5839.8
+      },
+      {
+        "device": "edge-5",
+        "size": 22,
+        "partition_sec": 40.0,
+        "placement": "edge-local",
+        "n": 132,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 571.3
+      },
+      {
+        "device": "edge-5",
+        "size": 22,
+        "partition_sec": 40.0,
+        "placement": "hybrid",
+        "n": 132,
+        "edge_success_pct": 100.0,
+        "median_ttd_steps": 1.0,
+        "mean_cross_kb": 0.2
+      }
+    ]
+  },
+  "energy_rapl_x86": {
+    "runs": 50000.0,
+    "seconds": 36.55,
+    "joules": 933.443,
+    "watts": 25.54,
+    "idle_watts": 14.37,
+    "marginal_joules": 408.374,
+    "diagnosed": 50000.0,
+    "joules_per_diagnosis_total": 0.018669,
+    "joules_per_diagnosis_marginal": 0.008167,
+    "note": "Package energy via Intel RAPL over the full localization pipeline (synthetic metric generation plus detector plus ranker); the marginal figure subtracts idle package draw and is the cost attributable to the work."
+  },
+  "parameters": {
+    "sampling_hz": 10,
+    "step_ms": 100,
+    "robust_iqr_to_sigma": 1.349,
+    "flat_metric_eps": 1e-09,
+    "cusum_baseline_window_steps": 15,
+    "cusum_slack_k": 0.5,
+    "cusum_threshold_h": 4.0,
+    "cusum_persistence_steps": 3,
+    "ppr_damping_alpha": 0.85,
+    "ppr_power_iterations": 100,
+    "ppr_self_weight": 1.0,
+    "fault_per_hop_delay_steps": 2,
+    "fault_ramp_theta_steps": 3,
+    "noise_sd": 2.0,
+    "noise_extra_per_loss": 6.0,
+    "drain_bandwidth_samples_per_step": 20,
+    "operating_point_h": 4.0
+  },
+  "false_alarm_sweep": {
+    "fault_free_hours": 50.0,
+    "operating_point_h": 4.0,
+    "rows": [
+      {
+        "h": 3.0,
+        "persist": 3,
+        "observation_hours": 50.0,
+        "total_false_alarms": 246,
+        "false_alarms_per_hour": 4.92
+      },
+      {
+        "h": 4.0,
+        "persist": 3,
+        "observation_hours": 50.0,
+        "total_false_alarms": 16,
+        "false_alarms_per_hour": 0.32
+      },
+      {
+        "h": 5.0,
+        "persist": 3,
+        "observation_hours": 50.0,
+        "total_false_alarms": 1,
+        "false_alarms_per_hour": 0.02
+      },
+      {
+        "h": 6.0,
+        "persist": 3,
+        "observation_hours": 50.0,
+        "total_false_alarms": 0,
+        "false_alarms_per_hour": 0.0
+      },
+      {
+        "h": 7.0,
+        "persist": 3,
+        "observation_hours": 50.0,
+        "total_false_alarms": 0,
+        "false_alarms_per_hour": 0.0
+      },
+      {
+        "h": 8.0,
+        "persist": 3,
+        "observation_hours": 50.0,
+        "total_false_alarms": 0,
+        "false_alarms_per_hour": 0.0
+      }
+    ]
+  },
+  "constrained_footprint": {
+    "events": 30,
+    "cap_cpus": 1.0,
+    "cap_mem_mb": 512.0,
+    "cross_bytes_median": 1141753.0,
+    "cross_bytes_max": 2670977.0,
+    "cpu_ms_median": 1115.0,
+    "cpu_ms_max": 3000.0,
+    "rss_kb_median": 4884.0,
+    "rss_kb_max": 4896.0,
+    "p99_handler_us_median": 2.0,
+    "p99_handler_us_max": 3.0,
+    "note": "Cloud collector footprint under a cgroup v2 cap of cap_cpus vCPU and cap_mem_mb MB; the edge collectors are capped identically. The collector binary and the 103-service workload are identical across the four production tiers, so this is the footprint of the pipeline under the cap."
+  }
+}

@@ -56,7 +56,7 @@ sim_steps=$(awk -F, 'NR>1 && $1=="edge-local" && $14!="censored" && $14!=""{s+=$
 if [ "$base_med" != "NA" ] && [ -n "$base_med" ]; then
   ms_per_step=$(awk -v b="$base_med" -v s="$sim_steps" 'BEGIN{printf "%.1f",(s>0? b/s : b)}')
 else
-  ms_per_step=100.0
+  ms_per_step=500.0   # fallback to the production collector tick when no baseline median is available
 fi
 
 OUT="results/production/${PLATFORM}_calib.txt"

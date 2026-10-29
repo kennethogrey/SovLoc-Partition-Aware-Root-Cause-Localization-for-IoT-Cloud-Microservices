@@ -41,6 +41,28 @@ MOUNT="${MOUNT:-/app/scenario.yaml}"
 LEAD_MS="${LEAD_MS:-500}"
 BUILD="${BUILD:-1}"
 KEEP_UP="${KEEP_UP:-0}"
+# Use one prebuilt image for every container instead of a per-service `build: .`.
+# The compose lists the image ~110 times, so letting Compose build it per service
+# launches ~110 concurrent `cargo build` jobs. With IMAGE set, build the image once
+# (docker build -t <IMAGE> .) and every service just references it. Off by default.
+IMAGE="${IMAGE:-}"
+
+# Optional B7 constrained-hardware footprint. When CAP_COLLECTORS=1 the cloud and
+# each edge collector container is capped with cgroup v2 limits of CAP_CPUS vCPU
+# and CAP_MEM memory (the microservice containers stay unconstrained, they only
+# generate load). The run then writes a distinct CSV, appends two provenance
+# columns, and tags the platform label with -capped, so the standard run and its
+# results/production/<platform>.csv are left untouched. Off by default.
+CAP_COLLECTORS="${CAP_COLLECTORS:-0}"
+CAP_CPUS="${CAP_CPUS:-1.0}"
+CAP_MEM="${CAP_MEM:-512m}"
+CAP_HDR=""; CAP_ROW=""
+if [ "$CAP_COLLECTORS" = "1" ]; then
+  CAP_MEM_MB="${CAP_MEM%m}"
+  CAP_HDR=",cap_cpus,cap_mem_mb"
+  CAP_ROW=",${CAP_CPUS},${CAP_MEM_MB}"
+  PLATFORM="${PLATFORM}-capped"
+fi
 
 BIN="target/release/mesh"
 command -v docker >/dev/null || { echo "docker is required"; exit 1; }
@@ -52,6 +74,23 @@ command -v curl   >/dev/null || { echo "curl is required to poll /status"; exit 
 echo "==> generating $COMPOSE_FILE from $SCENARIO" >&2
 "$BIN" gen-compose --scenario "$SCENARIO" --out "$COMPOSE_FILE" \
   --cloud-http-port "$CLOUD_HTTP" --edge-http-base-port "$EDGE_HTTP_BASE" >/dev/null
+
+# Point every service at one prebuilt image instead of 110 per-service builds.
+if [ -n "$IMAGE" ]; then
+  echo "==> using prebuilt image $IMAGE for all services (no per-service build)" >&2
+  sed -i "s|^    build: \.\$|    image: ${IMAGE}|" "$COMPOSE_FILE"
+  BUILD=0
+fi
+
+# B7: cap only the collector services (cloud + edge-N), never the edge-N-svc-M
+# microservices. The service header lines are exactly "  cloud:" and "  edge-N:".
+if [ "$CAP_COLLECTORS" = "1" ]; then
+  echo "==> capping cloud + edge collectors at ${CAP_CPUS} vCPU / ${CAP_MEM} (cgroup v2)" >&2
+  awk -v c="$CAP_CPUS" -v m="$CAP_MEM" '
+    { print }
+    /^  (cloud|edge-[0-9]+):$/ { print "    cpus: \"" c "\""; print "    mem_limit: " m }
+  ' "$COMPOSE_FILE" > "$COMPOSE_FILE.capped" && mv "$COMPOSE_FILE.capped" "$COMPOSE_FILE"
+fi
 
 PROJECT="$(docker compose -f "$COMPOSE_FILE" config 2>/dev/null | awk '/^name:/{print $2; exit}')"
 [ -n "$PROJECT" ] || { echo "could not read compose project name"; exit 1; }
@@ -100,7 +139,7 @@ inject() { docker compose -f "$COMPOSE_FILE" exec -T sovloc-control \
 
 OUT="results/production/${PLATFORM}.csv"
 mkdir -p results/production
-echo "platform,event,culprit,culprit_side,device,partition_sec,edge_localized,edge_ttd_ms,cloud_localized_during_cut,cloud_min_visible,n_services,cross_bytes,cpu_ms,rss_kb,p99_handler_us" > "$OUT"
+echo "platform,event,culprit,culprit_side,device,partition_sec,edge_localized,edge_ttd_ms,cloud_localized_during_cut,cloud_min_visible,n_services,cross_bytes,cpu_ms,rss_kb,p99_handler_us${CAP_HDR}" > "$OUT"
 
 echo "==> running $EVENTS events on $PLATFORM" >&2
 for ev in $(seq 1 "$EVENTS"); do
@@ -164,7 +203,7 @@ for ev in $(seq 1 "$EVENTS"); do
   p99="$(status_field "$CLOUD_HTTP" p99_handler_us)"; [ -n "$p99" ] || p99=NA
   cross_bytes=$(( bytes1 - bytes0 )); [ "$cross_bytes" -ge 0 ] 2>/dev/null || cross_bytes=NA
   cpu_ms=$(( cpu1 - cpu0 )); [ "$cpu_ms" -ge 0 ] 2>/dev/null || cpu_ms=NA
-  echo "${PLATFORM},${ev},${culprit},${side},${dev},${psec},${edge_loc},${edge_ttd:-NA},${cloud_loc},${cloud_minvis:-NA},${N_SVC},${cross_bytes},${cpu_ms},${rss},${p99}" >> "$OUT"
+  echo "${PLATFORM},${ev},${culprit},${side},${dev},${psec},${edge_loc},${edge_ttd:-NA},${cloud_loc},${cloud_minvis:-NA},${N_SVC},${cross_bytes},${cpu_ms},${rss},${p99}${CAP_ROW}" >> "$OUT"
 
   inject none      # clear the fault
   sleep "$SETTLE"  # let the faulted service settle before the next event

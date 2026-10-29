@@ -46,11 +46,25 @@ source.
 
 ## Requirements
 
-Either the pinned Rust toolchain, or just Docker.
+Either the pinned Rust toolchain plus Python 3, or just Docker.
 
 - Native: Rust 1.82.0 (pinned in `rust-toolchain.toml`; `rustup` installs it
-  automatically). No Python, no TeX. Check with `cargo --version`.
+  automatically) and Python 3.10 or newer, standard library only. The Rust side runs
+  the simulator and the benchmark; Python assembles `results/results.json`, runs the
+  external RCAEval comparison, and splits the calibration. The optional `RCAEval`
+  package re-runs the published comparators from their own source; without it the
+  reproduction reuses the committed `results/analysis/rcaeval_baselines*.csv`. No TeX.
+  Check with `cargo --version` and `python3 --version`.
 - Container only: Docker with Compose v2. `docker --version && docker compose version`.
+
+### Running on Windows (WSL)
+
+The reproduction targets Linux. On Windows, run it inside the Windows Subsystem for
+Linux (WSL 2) rather than native PowerShell, since the scripts, the network emulation,
+and the container paths assume a Linux userland. Install a distribution such as Ubuntu
+with `wsl --install`, open the WSL shell, install Rust and Python 3 there, then clone
+the repository and run `make reproduce` from inside WSL exactly as on Linux. The Docker
+path works the same way through Docker Desktop's WSL 2 backend.
 
 ## The one command
 
