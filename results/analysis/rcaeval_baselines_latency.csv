@@ -1,0 +1,5 @@
+method,cases,top1_pct,top3_pct,avg5_pct,mean_service_rank,note
+baro,125,16.8,24.8,25.6,3.24,
+nsigma,125,10.4,23.2,22.7,3.68,
+circa,125,11.2,21.6,21.9,3.50,75 internal fallback(s)
+rcd,0,,,,,AttributeError: module 'causallearn.utils.PCUtils.SkeletonDiscovery' has no attribute 'local_skeleton_discovery'

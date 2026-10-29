@@ -44,7 +44,7 @@ for path in "$@"; do
   [ -f "$path" ] || { echo "$path: missing"; continue; }
   plat="$(awk -F, 'NR==2{print $1; exit}' "$path")"; [ -n "$plat" ] || plat="$path"
   calib="results/production/${plat}_calib.txt"
-  ms_per_step=100   # sim STEP_MS default
+  ms_per_step=500   # fallback: the production collector tick is 500 ms; every platform here overrides this from its _calib.txt
   if [ -f "$calib" ]; then
     v=$(awk -F= '/ms_per_step/{gsub(/[^0-9.]/,"",$2); print $2; exit}' "$calib" 2>/dev/null)
     [ -n "$v" ] && ms_per_step="$v"

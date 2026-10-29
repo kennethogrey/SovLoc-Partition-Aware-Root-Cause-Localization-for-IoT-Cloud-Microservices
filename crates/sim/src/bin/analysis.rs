@@ -493,21 +493,21 @@ fn main() -> Result<()> {
     let (el_slope, el_slo, el_shi, el_sp) = slope_boot(&ex, &ey, BOOT_SEED + 1);
 
     // ---- E2 ablation: four rankers' top-1 accuracy, paired by seed -----------
-    // argmax and BARO are graph-blind; random-walk is the undirected graph
-    // baseline; PPR is ours. Every ranker sees the identical held view for a given
-    // (seed, culprit), so the comparison is paired.
-    const RANKERS: [&str; 4] = ["argmax", "baro", "random-walk", "ppr"];
+    // argmax is graph-blind; random-walk is the undirected graph baseline; PPR is
+    // ours. Every ranker sees the identical held view for a given (seed, culprit),
+    // so the comparison is paired. The published BARO and CIRCA comparators are run
+    // on the external RCAEval benchmark with their authors' implementations, not
+    // here, so this ablation isolates only what the graph and its direction buy.
+    const RANKERS: [&str; 3] = ["argmax", "random-walk", "ppr"];
     let mut e2w = csv::Writer::from_path(format!("{out}/summary_e2.csv"))?;
     e2w.write_record([
         "topology",
         "fault",
         "n",
         "argmax_top1_pct",
-        "baro_top1_pct",
         "random_walk_top1_pct",
         "ppr_top1_pct",
         "ppr_minus_argmax_pct",
-        "ppr_minus_baro_pct",
         "ppr_minus_random_walk_pct",
     ])?;
     let mut topos: Vec<String> = e2.iter().map(|r| r.topology.clone()).collect();
@@ -518,7 +518,6 @@ fn main() -> Result<()> {
     faults.dedup();
     // Pooled paired PPR-minus-baseline differences for the headline contrasts.
     let mut ppr_minus_argmax: Vec<f64> = Vec::new();
-    let mut ppr_minus_baro: Vec<f64> = Vec::new();
     let mut ppr_minus_rw: Vec<f64> = Vec::new();
     for tp in &topos {
         for ft in &faults {
@@ -546,10 +545,9 @@ fn main() -> Result<()> {
                         hits[ri] += 1;
                     }
                 }
-                let ph = maps[3][k] as i32; // ppr
+                let ph = maps[2][k] as i32; // ppr
                 ppr_minus_argmax.push((ph - maps[0][k] as i32) as f64);
-                ppr_minus_baro.push((ph - maps[1][k] as i32) as f64);
-                ppr_minus_rw.push((ph - maps[2][k] as i32) as f64);
+                ppr_minus_rw.push((ph - maps[1][k] as i32) as f64);
             }
             let p = |h: usize| pct(h as f64 / n as f64);
             e2w.write_record([
@@ -559,10 +557,8 @@ fn main() -> Result<()> {
                 format!("{:.1}", p(hits[0])),
                 format!("{:.1}", p(hits[1])),
                 format!("{:.1}", p(hits[2])),
-                format!("{:.1}", p(hits[3])),
-                format!("{:.1}", p(hits[3]) - p(hits[0])),
-                format!("{:.1}", p(hits[3]) - p(hits[1])),
-                format!("{:.1}", p(hits[3]) - p(hits[2])),
+                format!("{:.1}", p(hits[2]) - p(hits[0])),
+                format!("{:.1}", p(hits[2]) - p(hits[1])),
             ])?;
         }
     }
@@ -589,15 +585,12 @@ fn main() -> Result<()> {
     let (c5_diff, c5_lo, c5_hi) =
         bootstrap_ci(&ppr_minus_argmax, mean, N_BOOT, 0.025, BOOT_SEED + 2);
     let c5_p = diff_p(&ppr_minus_argmax, BOOT_SEED + 3);
-    let (baro_diff, baro_lo, baro_hi) =
-        bootstrap_ci(&ppr_minus_baro, mean, N_BOOT, 0.025, BOOT_SEED + 4);
-    let baro_p = diff_p(&ppr_minus_baro, BOOT_SEED + 5);
     let (rw_diff, rw_lo, rw_hi) = bootstrap_ci(&ppr_minus_rw, mean, N_BOOT, 0.025, BOOT_SEED + 6);
     let rw_p = diff_p(&ppr_minus_rw, BOOT_SEED + 7);
 
     // ---- Holm over the difference-test family -------------------------------
-    // C1 (sf slope), C4 (log-rank), and the three PPR-vs-baseline ranker contrasts.
-    let fam = [sf_sp, lr_p, c5_p, baro_p, rw_p];
+    // C1 (sf slope), C4 (log-rank), and the two PPR-vs-baseline ranker contrasts.
+    let fam = [sf_sp, lr_p, c5_p, rw_p];
     let holm_adj = holm(&fam, 0.05);
 
     // ---- E4 telemetry cost: mean cross KB per (placement, services, rate) ----
@@ -981,24 +974,18 @@ fn main() -> Result<()> {
         c5_diff, c5_lo, c5_hi, c5_p
     ));
     stats.push_str(&format!(
-        "C5b PPR minus BARO top-1 (pooled, paired): {:.3} \
-         (95% CI {:.3}..{:.3}), p={:.4}\n",
-        baro_diff, baro_lo, baro_hi, baro_p
-    ));
-    stats.push_str(&format!(
         "C5c PPR minus random-walk top-1 (pooled, paired): {:.3} \
          (95% CI {:.3}..{:.3}), p={:.4}\n",
         rw_diff, rw_lo, rw_hi, rw_p
     ));
     stats.push_str(
-        "\nHolm correction over the difference-test family (C1, C4, C5 argmax, C5 BARO, \
+        "\nHolm correction over the difference-test family (C1, C4, C5 argmax, \
          C5 random-walk):\n",
     );
     for (i, (name, p)) in [
         ("C1", sf_sp),
         ("C4", lr_p),
         ("C5 argmax", c5_p),
-        ("C5 BARO", baro_p),
         ("C5 random-walk", rw_p),
     ]
     .iter()
@@ -1055,8 +1042,6 @@ fn main() -> Result<()> {
     numbers.push_str(&m("logrankP", fmt_p(lr_p)));
     numbers.push_str(&m("pprMinusArgmax", format!("{:.1}", pct(c5_diff))));
     numbers.push_str(&m("pprArgmaxP", fmt_p(c5_p)));
-    numbers.push_str(&m("pprMinusBaro", format!("{:.1}", pct(baro_diff))));
-    numbers.push_str(&m("pprBaroP", fmt_p(baro_p)));
     numbers.push_str(&m("pprMinusRandomWalk", format!("{:.1}", pct(rw_diff))));
     numbers.push_str(&m("pprRandomWalkP", fmt_p(rw_p)));
     numbers.push_str(&m("bytesRatioEdge", format!("{ratio_el:.1}")));

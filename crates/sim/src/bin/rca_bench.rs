@@ -1,9 +1,11 @@
 //! External-dataset benchmark for the SovLoc localizer.
 //!
 //! The simulator could be accused of embodying the detector's own assumptions, so
-//! this binary runs the SAME detector and the SAME four rankers (argmax, BARO,
-//! random-walk, PPR) on an independent benchmark with ground-truth root causes and
-//! reports top-1 and top-3 accuracy per ranker. It targets the RCAEval datasets
+//! this binary runs the SAME detector and our three rankers (argmax, random-walk,
+//! PPR) on an independent benchmark with ground-truth root causes and reports
+//! top-1, top-3 and Avg@5 accuracy per ranker. The published BARO, N-sigma and
+//! CIRCA comparators are run on the same cases by their authors' own code in
+//! scripts/bench/run_rcaeval_baselines.py. It targets the RCAEval datasets
 //! (arXiv 2412.17015), which ship pre-collected metric time series and a labelled
 //! root cause per fault case, so no live cluster is needed.
 //!
@@ -29,11 +31,10 @@ use anyhow::{bail, Context, Result};
 use clap::Parser;
 
 use rca_core::stats::robust_score;
-use rca_core::{rank_causes, CallGraph, Ranker, RcaConfig};
+use rca_core::{rank_causes, rank_of, CallGraph, Ranker, RcaConfig};
 
-const RANKERS: [(&str, Ranker); 4] = [
+const RANKERS: [(&str, Ranker); 3] = [
     ("argmax", Ranker::Argmax),
-    ("baro", Ranker::Baro),
     ("random-walk", Ranker::RandomWalk),
     ("ppr", Ranker::Ppr),
 ];
@@ -115,12 +116,14 @@ fn parse_graph(text: &str, names: &[String]) -> CallGraph {
     g
 }
 
-/// One case's result: per ranker, its name and whether the culprit was top-1/top-3.
-type CaseScore = Vec<(&'static str, bool, bool)>;
+/// One case's result: per ranker, its name and the 1-based rank of the culprit in
+/// that ranker's output (None when the culprit was not ranked at all).
+type CaseScore = Vec<(&'static str, Option<usize>)>;
 
-/// Score one case with every ranker. Returns `(ranker_name, top1, top3)` per
-/// ranker. The anomaly is the robust deviation of each service's last sample from
-/// its own pre-fault baseline, exactly as the simulator and the mesh compute it.
+/// Score one case with every ranker. Returns `(ranker_name, culprit_rank)` per
+/// ranker, from which top-1, top-3 and Avg@5 follow. The anomaly is the robust
+/// deviation of each service's last sample from its own pre-fault baseline,
+/// exactly as the simulator and the mesh compute it.
 fn score_case(
     names: &[String],
     series: &[Vec<f64>],
@@ -153,15 +156,18 @@ fn score_case(
         .iter()
         .map(|(name, r)| {
             let ranked = rank_causes(graph, &anomaly, &observed, &cfg, *r);
-            let top1 = ranked.first().map(|c| c.service) == Some(culprit);
-            let top3 = ranked.iter().take(3).any(|c| c.service == culprit);
-            (*name, top1, top3)
+            (*name, rank_of(&ranked, culprit))
         })
         .collect()
 }
 
-/// Load one case directory and score it; None when it is not a usable case.
-fn run_case(dir: &Path, metric: &str, cli_culprit: Option<&str>) -> Result<Option<CaseScore>> {
+/// Load one case directory and score it; None when it is not a usable case. On
+/// success returns the ground-truth service label and the per-ranker scores.
+fn run_case(
+    dir: &Path,
+    metric: &str,
+    cli_culprit: Option<&str>,
+) -> Result<Option<(String, CaseScore)>> {
     let mpath = dir.join("metrics.csv");
     if !mpath.exists() {
         return Ok(None);
@@ -184,7 +190,7 @@ fn run_case(dir: &Path, metric: &str, cli_culprit: Option<&str>) -> Result<Optio
         );
         return Ok(None);
     };
-    Ok(Some(score_case(&names, &series, &graph, culprit)))
+    Ok(Some((label, score_case(&names, &series, &graph, culprit))))
 }
 
 fn main() -> Result<()> {
@@ -194,10 +200,11 @@ fn main() -> Result<()> {
         bail!("dataset root {} is not a directory", cli.dir);
     }
 
-    // Tally top-1 and top-3 hits per ranker across cases.
-    let mut top1 = [0usize; RANKERS.len()];
-    let mut top3 = [0usize; RANKERS.len()];
+    // Hits at each cutoff k=1..5 per ranker (for top-1, top-3 and Avg@5), plus the
+    // per-case culprit rank for the paired bootstrap against the RCAEval comparators.
+    let mut hit_at = vec![[0usize; 5]; RANKERS.len()];
     let mut n_cases = 0usize;
+    let mut percase: Vec<(String, String, &'static str, Option<usize>)> = Vec::new();
 
     let mut entries: Vec<_> = fs::read_dir(root)?.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.path());
@@ -206,15 +213,20 @@ fn main() -> Result<()> {
         if !p.is_dir() {
             continue;
         }
-        if let Some(scores) = run_case(&p, &cli.metric, None)? {
+        if let Some((label, scores)) = run_case(&p, &cli.metric, None)? {
             n_cases += 1;
-            for (i, (_, a, b)) in scores.iter().enumerate() {
-                if *a {
-                    top1[i] += 1;
+            let cid = p
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_string();
+            for (i, (name, rank)) in scores.iter().enumerate() {
+                for k in 0..5 {
+                    if matches!(rank, Some(r) if *r <= k + 1) {
+                        hit_at[i][k] += 1;
+                    }
                 }
-                if *b {
-                    top3[i] += 1;
-                }
+                percase.push((cid.clone(), label.clone(), name, *rank));
             }
         }
     }
@@ -230,24 +242,43 @@ fn main() -> Result<()> {
         fs::create_dir_all(parent)?;
     }
     let mut w = csv::Writer::from_path(&cli.out)?;
-    w.write_record(["ranker", "cases", "top1_pct", "top3_pct"])?;
-    println!(
-        "External benchmark ({n_cases} cases, metric {}):",
-        cli.metric
-    );
+    w.write_record(["ranker", "cases", "top1_pct", "top3_pct", "avg5_pct"])?;
+    println!("External benchmark ({n_cases} cases, metric {}):", cli.metric);
     for (i, (name, _)) in RANKERS.iter().enumerate() {
-        let t1 = 100.0 * top1[i] as f64 / n_cases as f64;
-        let t3 = 100.0 * top3[i] as f64 / n_cases as f64;
+        let ac = |k: usize| 100.0 * hit_at[i][k] as f64 / n_cases as f64;
+        let (t1, t3) = (ac(0), ac(2));
+        let avg5 = (0..5).map(ac).sum::<f64>() / 5.0;
         w.write_record([
             name.to_string(),
             n_cases.to_string(),
             format!("{t1:.1}"),
             format!("{t3:.1}"),
+            format!("{avg5:.1}"),
         ])?;
-        println!("  {name:<12} top-1 {t1:5.1}%   top-3 {t3:5.1}%");
+        println!("  {name:<12} top-1 {t1:5.1}%   top-3 {t3:5.1}%   Avg@5 {avg5:5.1}%");
     }
     w.flush()?;
-    println!("Wrote {}", cli.out);
+
+    // Per-case ranks, same schema as the RCAEval comparator harness, so the two can
+    // be joined on `case` for the paired bootstrap and Holm comparison.
+    let pc = Path::new(&cli.out).with_file_name("rca_bench_percase.csv");
+    let mut pw = csv::Writer::from_path(&pc)?;
+    pw.write_record(["method", "case", "true_service", "hit1", "hit3", "svc_rank"])?;
+    for (cid, svc, name, rank) in &percase {
+        let h1 = u8::from(matches!(rank, Some(1)));
+        let h3 = u8::from(matches!(rank, Some(r) if *r <= 3));
+        let rk = rank.map(|r| r.to_string()).unwrap_or_default();
+        pw.write_record([
+            name.to_string(),
+            cid.clone(),
+            svc.clone(),
+            h1.to_string(),
+            h3.to_string(),
+            rk,
+        ])?;
+    }
+    pw.flush()?;
+    println!("Wrote {} and {}", cli.out, pc.display());
     Ok(())
 }
 
@@ -257,7 +288,7 @@ mod tests {
 
     // A tiny three-service case: gateway -> api -> db. The db (deepest) is the
     // culprit; its caller api is amplified above it, so only the graph-aware PPR
-    // walk should put db first, while argmax/BARO pick the amplified api.
+    // walk should put db first, while argmax picks the amplified api.
     const METRICS: &str = "\
 time,gateway_latency,api_latency,db_latency
 0,20,20,20
@@ -289,13 +320,15 @@ time,gateway_latency,api_latency,db_latency
         let graph = parse_graph(GRAPH, &names);
         let culprit = names.iter().position(|n| n == "db").unwrap();
         let scores = score_case(&names, &series, &graph, culprit);
-        let by = |nm: &str| scores.iter().find(|(n, _, _)| *n == nm).unwrap();
-        assert!(by("ppr").1, "PPR should get top-1 on the deepest culprit");
-        assert!(
-            !by("argmax").1,
+        let rank = |nm: &str| scores.iter().find(|(n, _)| *n == nm).unwrap().1;
+        assert_eq!(rank("ppr"), Some(1), "PPR should get top-1 on the deepest culprit");
+        assert_ne!(
+            rank("argmax"),
+            Some(1),
             "argmax should miss top-1 (picks the amplified caller)"
         );
         // Everyone should at least rank the culprit in the top 3 of 3.
-        assert!(by("ppr").2 && by("argmax").2);
+        assert!(matches!(rank("ppr"), Some(r) if r <= 3));
+        assert!(matches!(rank("argmax"), Some(r) if r <= 3));
     }
 }

@@ -1,0 +1,10 @@
+tier,metric,ms_per_step_calib,ratio,ci_lo,ci_hi,in_band_0.8_1.2
+single-node-mesh,median_ttd,646.0,1.006,0.850,1.410,yes
+single-node-mesh,p95_ttd,646.0,1.361,1.165,1.751,no
+single-node-mesh,bytes_per_event_stability,,1.144,0.902,1.249,yes
+k3s,median_ttd,480.0,0.994,0.899,1.203,yes
+k3s,p95_ttd,480.0,1.571,1.395,1.798,no
+openstack,median_ttd,606.5,1.228,0.960,1.932,no
+openstack,p95_ttd,606.5,1.295,1.240,2.012,no
+cranecloud,median_ttd,572.0,1.042,0.888,1.204,yes
+cranecloud,p95_ttd,572.0,1.534,1.056,1.932,no
