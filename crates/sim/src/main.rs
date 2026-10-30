@@ -564,23 +564,50 @@ fn experiment_fp(base: u64, reps: usize) -> Vec<FpRow> {
     rows
 }
 
-/// Sum of the Intel RAPL energy counters (microjoules) across packages, or None
-/// when RAPL is unreadable (not Intel, or no root). Reading `energy_uj` needs
-/// privilege, so the energy experiment is run under sudo and is not in the default
-/// set that `make reproduce` runs.
-fn rapl_energy_uj() -> Option<u128> {
-    let mut total = 0u128;
-    let mut any = false;
+/// Per-package Intel RAPL readings as (energy_uj, max_energy_range_uj), or None when
+/// RAPL is unreadable (not Intel, or no root). The max range lets a reader correct a
+/// counter that wrapped between two samples. Reading `energy_uj` needs privilege, so
+/// the energy experiment is run under sudo and is not in the default `make reproduce`.
+fn rapl_energy_domains() -> Option<Vec<(u128, u128)>> {
+    let mut v = Vec::new();
     for i in 0..8 {
-        let p = format!("/sys/class/powercap/intel-rapl/intel-rapl:{i}/energy_uj");
-        if let Ok(s) = std::fs::read_to_string(&p) {
-            if let Ok(v) = s.trim().parse::<u128>() {
-                total += v;
-                any = true;
+        let dir = format!("/sys/class/powercap/intel-rapl/intel-rapl:{i}");
+        if let Ok(s) = std::fs::read_to_string(format!("{dir}/energy_uj")) {
+            if let Ok(e) = s.trim().parse::<u128>() {
+                let max = std::fs::read_to_string(format!("{dir}/max_energy_range_uj"))
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u128>().ok())
+                    .unwrap_or(0);
+                v.push((e, max));
             }
         }
     }
-    any.then_some(total)
+    (!v.is_empty()).then_some(v)
+}
+
+/// Microjoules drawn between an earlier and a later per-package reading, correcting
+/// any package whose counter wrapped (later < earlier) by adding its max range. The
+/// RAPL counter wraps at `max_energy_range_uj` (tens of kilojoules), not at the u128
+/// boundary, so a plain wrapping subtraction of the summed counters yields a ~2^128
+/// garbage delta on the rare run that straddles a wrap; correcting per package fixes
+/// that. A package with no readable max range and a wrapped counter contributes 0, so
+/// a rare wrap under-counts slightly rather than producing garbage.
+fn rapl_delta_uj(before: &[(u128, u128)], after: &[(u128, u128)]) -> f64 {
+    let n = before.len().min(after.len());
+    let mut total = 0u128;
+    for i in 0..n {
+        let (a, max) = before[i];
+        let (b, _) = after[i];
+        let d = if b >= a {
+            b - a
+        } else if max > 0 {
+            (b + max).saturating_sub(a)
+        } else {
+            0
+        };
+        total += d;
+    }
+    total as f64
 }
 
 /// Energy (E4): measure the package energy drawn by a fixed localization workload
@@ -598,18 +625,38 @@ fn experiment_energy(base: u64, runs: usize) {
         simulate(&p).diagnosed
     };
 
-    // Idle baseline: package power over a short sleep, so we can subtract the draw
-    // the machine would have spent doing nothing.
-    let idle_secs = 2.0;
-    let i0 = rapl_energy_uj();
-    std::thread::sleep(std::time::Duration::from_secs_f64(idle_secs));
-    let i1 = rapl_energy_uj();
-    let idle_w = match (i0, i1) {
-        (Some(a), Some(b)) => (b.wrapping_sub(a)) as f64 / 1e6 / idle_secs,
-        _ => f64::NAN,
+    // Idle baseline: the quiescent floor power, taken as the minimum package draw
+    // over many short windows rather than one average. On a shared machine any
+    // background activity only adds to the package draw, so a single window is biased
+    // up by whatever ran during it (an earlier fixed 2 s sample swung from 10 to 28 W
+    // on this host, sometimes above the busy draw itself); the minimum window is the
+    // cleanest estimate of the power the machine spends doing nothing, so the marginal
+    // above it is reproducible rather than dominated by a bursty neighbour process.
+    let idle_w = {
+        let window = 0.5_f64;
+        let windows = 30;
+        let mut floor = f64::INFINITY;
+        let mut got = false;
+        for _ in 0..windows {
+            let a = rapl_energy_domains();
+            std::thread::sleep(std::time::Duration::from_secs_f64(window));
+            let b = rapl_energy_domains();
+            if let (Some(a), Some(b)) = (&a, &b) {
+                let w = rapl_delta_uj(a, b) / 1e6 / window;
+                if w.is_finite() && w < floor {
+                    floor = w;
+                }
+                got = true;
+            }
+        }
+        if got && floor.is_finite() {
+            floor
+        } else {
+            f64::NAN
+        }
     };
 
-    let before = rapl_energy_uj();
+    let before = rapl_energy_domains();
     let t0 = std::time::Instant::now();
     let mut diagnosed = 0usize;
     for k in 0..runs {
@@ -618,9 +665,9 @@ fn experiment_energy(base: u64, runs: usize) {
         }
     }
     let secs = t0.elapsed().as_secs_f64();
-    match (before, rapl_energy_uj()) {
+    match (before, rapl_energy_domains()) {
         (Some(a), Some(b)) => {
-            let joules = b.wrapping_sub(a) as f64 / 1e6;
+            let joules = rapl_delta_uj(&a, &b) / 1e6;
             let watts = joules / secs;
             let marginal = (joules - idle_w * secs).max(0.0);
             let per = |j: f64| {

@@ -243,7 +243,10 @@ fn main() -> Result<()> {
     }
     let mut w = csv::Writer::from_path(&cli.out)?;
     w.write_record(["ranker", "cases", "top1_pct", "top3_pct", "avg5_pct"])?;
-    println!("External benchmark ({n_cases} cases, metric {}):", cli.metric);
+    println!(
+        "External benchmark ({n_cases} cases, metric {}):",
+        cli.metric
+    );
     for (i, (name, _)) in RANKERS.iter().enumerate() {
         let ac = |k: usize| 100.0 * hit_at[i][k] as f64 / n_cases as f64;
         let (t1, t3) = (ac(0), ac(2));
@@ -321,7 +324,11 @@ time,gateway_latency,api_latency,db_latency
         let culprit = names.iter().position(|n| n == "db").unwrap();
         let scores = score_case(&names, &series, &graph, culprit);
         let rank = |nm: &str| scores.iter().find(|(n, _)| *n == nm).unwrap().1;
-        assert_eq!(rank("ppr"), Some(1), "PPR should get top-1 on the deepest culprit");
+        assert_eq!(
+            rank("ppr"),
+            Some(1),
+            "PPR should get top-1 on the deepest culprit"
+        );
         assert_ne!(
             rank("argmax"),
             Some(1),
