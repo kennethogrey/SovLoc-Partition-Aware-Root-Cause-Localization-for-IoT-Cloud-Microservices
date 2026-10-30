@@ -125,6 +125,55 @@ def summarize_capped(path):
     }
 
 
+def summarize_tier(path):
+    """Per-tier production headline (Table \\ref{tab:sovloc_prod}).
+
+    Computed with the SAME edge-fault filter and median/P95 conventions as
+    scripts/e6/compare_prod.sh (edge-side culprits that the edge collector
+    localized; one event per tier is a cloud-side fault), so the production table
+    regenerates from `make results-json` instead of being transcribed by hand and
+    silently drifting from a refreshed run.
+    """
+    rows = read_csv(path)
+    if not rows:
+        return None
+
+    def med(a):
+        a = sorted(a); n = len(a)
+        if n == 0:
+            return None
+        return a[n // 2] if n % 2 else (a[n // 2 - 1] + a[n // 2]) / 2
+
+    def p95(a):
+        a = sorted(a); n = len(a)
+        if n == 0:
+            return None
+        pos = 0.95 * (n - 1); lo = int(pos)
+        return a[-1] if lo >= n - 1 else a[lo] + (pos - lo) * (a[lo + 1] - a[lo])
+
+    total = len(rows)
+    edge_rows = [r for r in rows if r.get("culprit_side") == "edge"]
+    edge_localized = sum(1 for r in rows if r.get("edge_localized") in ("1", "1.0"))
+    ttd = [fnum(r.get("edge_ttd_ms")) for r in edge_rows
+           if r.get("edge_localized") in ("1", "1.0") and fnum(r.get("edge_ttd_ms")) is not None]
+    cloud_blind = sum(1 for r in edge_rows if r.get("cloud_localized_during_cut") in ("0", "0.0"))
+    cmv = [fnum(r.get("cloud_min_visible")) for r in edge_rows
+           if fnum(r.get("cloud_min_visible")) is not None]
+    return {
+        "events": total,
+        "edge_events": len(edge_rows),
+        "edge_localized": edge_localized,
+        "edge_localized_pct": round(100.0 * edge_localized / total, 1) if total else None,
+        "cloud_blind_in_cut": cloud_blind,
+        "cloud_blind_pct": round(100.0 * cloud_blind / len(edge_rows), 1) if edge_rows else None,
+        "edge_ttd_median_ms": med(ttd),
+        "edge_ttd_p95_ms": p95(ttd),
+        "cloud_min_visible_median": med(cmv),
+        "cloud_min_visible_min": min(cmv) if cmv else None,
+        "cloud_min_visible_max": max(cmv) if cmv else None,
+    }
+
+
 def main():
     mac = parse_macros(A / "numbers.tex")
     energy = parse_energy(A / "energy.txt")
@@ -263,6 +312,10 @@ def main():
             "rows": fp_sweep,
         },
         "constrained_footprint": summarize_capped(P / "production" / "single-node-mesh-capped.csv"),
+        "production_tiers": {
+            tier: summarize_tier(P / "production" / f"{tier}.csv")
+            for tier in ["single-node-mesh", "k3s", "openstack", "cranecloud"]
+        },
     }
 
     out = P / "results.json"
