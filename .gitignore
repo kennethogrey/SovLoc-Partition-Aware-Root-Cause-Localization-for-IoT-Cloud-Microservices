@@ -22,6 +22,10 @@ docker-compose.*.generated.yml
 /results/realnet_cloud_status_validate_*.csv
 /results/realnet_linktrace_*
 
+# Scratch run logs captured while driving the production tiers by hand. The
+# authoritative per-run measurements land in results/production/*.csv instead.
+/.tmprun/
+
 # Python
 __pycache__/
 *.pyc

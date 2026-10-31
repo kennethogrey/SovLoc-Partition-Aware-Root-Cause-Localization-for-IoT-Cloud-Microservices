@@ -272,13 +272,13 @@ scope the claim rather than hiding it (the examiner's rule).
 To answer "the simulator embodies the detector's assumptions", the SAME detector and
 the SAME four rankers are scored on an external benchmark with labelled root causes. The
 RCAEval RE1-OB dataset (Online Boutique, metric level; arXiv 2412.17015) is **bundled in
-the repository** at `data/rcaeval/RE1-OB.zip`, so a fresh clone needs no download:
+the repository** at `data/rcaeval/RE1-OB.tar.gz`, so a fresh clone needs no download:
 
 ```bash
-make bench            # unzips the bundled dataset, lays out 125 cases, scores every ranker
+make bench            # unpacks the bundled dataset, lays out 125 cases, scores every ranker
 ```
 
-`make bench` (also run as part of `make reproduce`) unzips `data/rcaeval/RE1-OB.zip` under
+`make bench` (also run as part of `make reproduce`) unpacks `data/rcaeval/RE1-OB.tar.gz` (with `tar xzf`) under
 `target/` (gitignored), runs `scripts/bench/prepare_re1ob.sh` to lay the 125 cases out for
 `rca_bench` (it normalises the `latency-50` column to `latency` and attaches the known
 Online Boutique call graph in `scripts/bench/ob_graph.csv`), and writes
