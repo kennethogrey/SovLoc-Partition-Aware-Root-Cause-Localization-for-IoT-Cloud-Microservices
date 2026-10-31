@@ -104,7 +104,7 @@ The build is pinned at three levels: `rust-toolchain.toml` fixes the compiler at
 `@sha256` digest. The raw per run CSVs are committed, not only the summaries, and
 `results/environment.txt` records the hardware, kernel, and toolchain. GitHub
 Actions re-runs the suite and the Docker reproduction on every push. The release
-that matches the manuscript is the annotated tag `v2.0-revision`.
+that matches the manuscript is the annotated tag `v3.3-reproducible`.
 
 ## Production validation (E6)
 
@@ -130,15 +130,16 @@ the cloud collector still sees its three local cloud services, so "cloud sees 0 
 7" is a measured outcome of the cut, not a guarantee of the topology.
 
 `RUNBOOK.md` has the step by step procedure for all four mandatory platforms:
-single node Rust, k3s, OpenStack (two VMs), and CRANE Cloud. At least thirty
-independent partition events per platform, with random culprits and cut lengths
-from 10 to 120 seconds, are recorded one row per event and compared against the
-simulation within the plus or minus twenty percent tolerance:
+single node mesh, k3s, OpenStack, and CRANE Cloud. At least thirty independent
+partition events per platform, with random culprits and per-device cut lengths from
+10 to 60 seconds, are recorded one row per event and compared against the simulation
+within the plus or minus twenty percent tolerance:
 
 ```bash
-PLATFORM=single-node scripts/e6/calibrate.sh          # E3: measure the real tick
-PLATFORM=single-node EVENTS=30 scripts/e6/run_events.sh
-scripts/e6/compare_prod.sh results/production/single-node.csv
+# the full 103-service mesh, >= 30 events per tier (k3s/OpenStack/CRANE in RUNBOOK.md):
+SCENARIO=scenarios/five-edge-100.yaml PLATFORM=single-node-mesh EVENTS=30 \
+  IMAGE=sovloc-mesh:local scripts/e6/run_events_mesh.sh
+scripts/e6/compare_prod.sh results/production/single-node-mesh.csv
 ```
 
 ## What is inside
@@ -158,20 +159,30 @@ scripts/e6/compare_prod.sh results/production/single-node.csv
 
 ## Honest limits
 
-The simulation numbers are modelled from documented assumptions, not physically
-measured, and the simulated accuracy is high because the generator's ground truth
-is clean and the topologies are small; a harder public benchmark would score lower,
-and that external check is noted as remaining. The production harness and the cut
-are real network validation. Second coder agreement (Cohen's kappa), Raspberry Pi
-energy, and an uncontrolled rural link are not run here; each has a written protocol
-and stays an honest limitation rather than an invented number. The use of a
-generative AI assistant during preparation is disclosed in the manuscript.
+The simulation numbers are modelled from documented assumptions rather than
+physically measured, and the internal accuracy is high because the generator's
+ground truth is clean and the topologies are small. That is why the study does not
+rest on the simulation alone. The same detector and ranker are scored on the
+external RCAEval RE1-OB benchmark (real third-party fault data, part of `make
+reproduce`), where personalized PageRank reaches 44.8% top-1, ahead of the published
+BARO, N-sigma, and CIRCA baselines; and the four production tiers run the same
+pipeline under real network cuts, where the calibrated simulation matches the
+measured edge median within twenty percent on all four. Energy is measured on this
+x86 host via Intel RAPL; a single-board-computer meter reading would extend it to
+non-x86 and is a scoped future step, not a gap in the reported figure. One
+uncontrolled degraded-link field trial over a real WiFi connection (about 46% loss)
+is included, where the edge collector keeps localizing the fault while the cloud
+collector, reached over the bad link, does not. The one limitation that stays open
+is second-coder agreement (Cohen's kappa): the literature screening is a
+single-reviewer classification with the coding published, and a second human coder
+has not been run. The use of a generative AI assistant during preparation is
+disclosed in the manuscript.
 
 ## Release
 
 ```bash
 git clone https://github.com/kennethogrey/SovLoc-Partition-Aware-Root-Cause-Localization-for-IoT-Cloud-Microservices.git sovloc
 cd sovloc
-git checkout v2.0-revision
+git checkout v3.3-reproducible
 make reproduce
 ```

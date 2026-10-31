@@ -29,19 +29,18 @@ Container path (nothing but Docker on the host): `./run.sh`.
 
 ## B. Host the code on GitHub (tagged, reproducible)
 
-The clean rebuild is committed on `main` but not yet pushed (origin still has the
-old code). From the repo root:
+The rebuild lives on the `multi-edge-rebuild` branch and is pushed to origin, tagged
+`v3.3-reproducible` (the release the manuscript cites). From the repo root:
 
 ```bash
 cd /home/ogrey/Development/masters/sovloc
-git log --oneline -5           # sanity: newest commits are the rebuild, author kennethogrey
-git push origin main           # fast-forwards over the old code
-git tag -a v2.0-revision -m "CTA-MSC-13 revision: honest rebuild + production harness"
-git push origin v2.0-revision
+git log --oneline -5           # sanity: author kennethogrey
+git push origin multi-edge-rebuild
+git push origin v3.3-reproducible
 ```
 
 Then confirm GitHub Actions is green (two jobs: `lint-test` and `docker-reproduce`).
-The release the manuscript cites is the tag `v2.0-revision`.
+The release the manuscript cites is the tag `v3.3-reproducible`.
 
 What the host now satisfies (examiner "Reproducibility statement"): public repo with
 a tagged release; one command (`make reproduce` / `./run.sh`); `Cargo.lock` + pinned
@@ -181,9 +180,9 @@ scripts/e6/compare_prod.sh results/production/single-node.csv
 
 ```bash
 # build + push the image once
-DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v2
+DOCKER_USER=<dockerhub-user> ./scripts/cranecloud/build_and_push.sh v9
 # deploy the cloud half
-sed -i "s#IMAGE_PLACEHOLDER#<dockerhub-user>/sovloc-mesh:v2#g" deploy/k3s/sovloc.yaml
+sed -i "s#IMAGE_PLACEHOLDER#<dockerhub-user>/sovloc-mesh:v9#g" deploy/k3s/sovloc.yaml
 kubectl label node <cloud-node> sovloc-role=cloud        # optional pinning
 kubectl apply -f deploy/k3s/sovloc.yaml
 kubectl get svc cloud-collector                          # note NodePort 30080
@@ -256,7 +255,7 @@ git add results/production/*.csv results/production/*_calib.txt results/environm
 git commit -m "E6: production validation results on <platforms>"
 git push origin main
 # move the release tag onto the commit whose results back the manuscript, if needed:
-#   git tag -f -a v2.0-revision -m "..." && git push -f origin v2.0-revision
+#   git tag -f -a v3.3-reproducible -m "..." && git push -f origin v3.3-reproducible
 ```
 
 `compare_prod.sh results/production/*.csv` prints one block per platform: edge time
@@ -283,8 +282,10 @@ make bench            # unpacks the bundled dataset, lays out 125 cases, scores 
 `rca_bench` (it normalises the `latency-50` column to `latency` and attaches the known
 Online Boutique call graph in `scripts/bench/ob_graph.csv`), and writes
 `results/analysis/summary_ext.csv`. The result: PPR reaches 44.8% top-1 / 71.2% top-3
-across the 125 cases, ahead of argmax and BARO (38.4%) and the random walk (36.8%), which
-is the external-benchmark number quoted in Section VIII of the manuscript.
+across the 125 cases, ahead of argmax (38.4%) and the random walk (36.8%), and well ahead
+of the published BARO, N-sigma, and CIRCA baselines (16.8%, 10.4%, 11.2% top-1 compared on
+latency, in `results/analysis/rcaeval_comparison.csv`), which is the external-benchmark
+comparison quoted in Section VIII of the manuscript.
 
 To score a different dataset, pass `DIR=<root>` (and `METRIC=<name>`) where each case
 subdirectory holds a `metrics.csv` (a header row then numeric rows; a leading `time`
@@ -302,6 +303,8 @@ make bench DIR=<dataset-root> METRIC=latency
 - Cloud-side faults on the remote tiers need remote injection; the harness injects
   edge-side faults there (the symmetric cloud-fault cost is shown in the simulation,
   E1). Single-node faults any of the seven.
-- Energy is measured on this x86 host via Intel RAPL (`make energy`); a Raspberry-Pi
-  power-meter run (E4) and an uncontrolled rural/mobile link (E8) remain documented
-  protocols. Second-coder Cohen's kappa (E9) stays an honest limitation.
+- Energy is measured on this x86 host via Intel RAPL (`make energy`); a non-x86
+  single-board-computer meter reading would extend it and is a scoped future step. One
+  uncontrolled degraded-link field trial (real WiFi, ~46% loss) is run and committed as
+  `results/production_field_link_*` (the edge localizes throughout; the cloud, over the
+  bad link, does not). Second-coder Cohen's kappa stays the one open limitation.

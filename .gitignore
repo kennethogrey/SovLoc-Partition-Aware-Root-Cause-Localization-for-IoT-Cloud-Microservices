@@ -17,7 +17,8 @@ docker-compose.*.generated.yml
 /logs/
 
 # Timestamped per-run captures from the Crane Cloud real-Internet trials. The
-# authoritative captured run is committed as results/production_crane_cloud_*.
+# authoritative captured run is committed as results/production_crane_cloud_*, and the
+# uncontrolled degraded-link field trial is committed as results/production_field_link_*.
 /results/realnet_edge_validate_*.log
 /results/realnet_cloud_status_validate_*.csv
 /results/realnet_linktrace_*

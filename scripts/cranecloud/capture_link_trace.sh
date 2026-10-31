@@ -16,6 +16,9 @@ URL="${1:?usage: capture_link_trace.sh <public-url> [seconds]}"
 URL="${URL%/}"
 SECONDS_TOTAL="${2:-180}"
 HOST="$(printf '%s' "$URL" | sed -E 's#^https?://##; s#/.*$##; s#:.*$##')"
+# The Crane host may block ICMP, so ping a reachable reference for real loss/RTT.
+# Default to the Crane host (path-specific); set PING_HOST=8.8.8.8 for a general uplink metric.
+PING_HOST="${PING_HOST:-$HOST}"
 
 TS="$(date +%Y%m%d_%H%M%S)"
 mkdir -p results
@@ -27,14 +30,14 @@ echo "  ping -> $PING_LOG"
 echo "  http -> $HTTP_CSV"
 
 # Continuous ping with timestamps (RTT + loss over time).
-( ping -O -D "$HOST" > "$PING_LOG" 2>&1 ) & PING_PID=$!
+( ping -O -D "$PING_HOST" > "$PING_LOG" 2>&1 ) & PING_PID=$!
 
-# HTTP round-trip time to /healthz once per second.
+# HTTP round-trip time to the collector's /status once per second.
 echo "unix_ts,http_code,time_total_s" > "$HTTP_CSV"
 END=$(( $(date +%s) + SECONDS_TOTAL ))
 while [ "$(date +%s)" -lt "$END" ]; do
   now=$(date +%s)
-  read -r code t < <(curl -s -o /dev/null -m 5 -w '%{http_code} %{time_total}' "$URL/healthz" 2>/dev/null || echo "000 0")
+  read -r code t < <(curl -s -o /dev/null -m 5 -w '%{http_code} %{time_total}' "$URL/status" 2>/dev/null || echo "000 0")
   echo "${now},${code},${t}" >> "$HTTP_CSV"
   sleep 1
 done

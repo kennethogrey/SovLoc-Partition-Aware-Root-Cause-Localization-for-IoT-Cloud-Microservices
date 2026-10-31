@@ -376,14 +376,14 @@
   },
   "energy_rapl_x86": {
     "runs": 50000.0,
-    "seconds": 37.562,
-    "joules": 1150.647,
-    "watts": 30.63,
-    "idle_watts": 11.27,
-    "marginal_joules": 727.299,
+    "seconds": 36.629,
+    "joules": 870.988,
+    "watts": 23.78,
+    "idle_watts": 8.63,
+    "marginal_joules": 554.736,
     "diagnosed": 50000.0,
-    "joules_per_diagnosis_total": 0.023013,
-    "joules_per_diagnosis_marginal": 0.014546,
+    "joules_per_diagnosis_total": 0.01742,
+    "joules_per_diagnosis_marginal": 0.011095,
     "note": "Package energy via Intel RAPL over the full localization pipeline (synthetic metric generation plus detector plus ranker); the marginal figure subtracts idle package draw and is the cost attributable to the work."
   },
   "parameters": {
@@ -457,14 +457,14 @@
     "events": 30,
     "cap_cpus": 1.0,
     "cap_mem_mb": 512.0,
-    "cross_bytes_median": 1139839.5,
-    "cross_bytes_max": 2673258.0,
-    "cpu_ms_median": 1100.0,
-    "cpu_ms_max": 2780.0,
-    "rss_kb_median": 4804.0,
-    "rss_kb_max": 4808.0,
-    "p99_handler_us_median": 2.0,
-    "p99_handler_us_max": 3.0,
+    "cross_bytes_median": 1094961.5,
+    "cross_bytes_max": 2468598.0,
+    "cpu_ms_median": 1590.0,
+    "cpu_ms_max": 4180.0,
+    "rss_kb_median": 4972.0,
+    "rss_kb_max": 4972.0,
+    "p99_handler_us_median": 3.0,
+    "p99_handler_us_max": 5.0,
     "note": "Cloud collector footprint under a cgroup v2 cap of cap_cpus vCPU and cap_mem_mb MB; the edge collectors are capped identically. The collector binary and the 103-service workload are identical across the four production tiers, so this is the footprint of the pipeline under the cap."
   },
   "production_tiers": {
@@ -475,10 +475,10 @@
       "edge_localized_pct": 100.0,
       "cloud_blind_in_cut": 29,
       "cloud_blind_pct": 100.0,
-      "edge_ttd_median_ms": 615.0,
-      "edge_ttd_p95_ms": 930.0,
-      "cloud_min_visible_median": 73.0,
-      "cloud_min_visible_min": 58.0,
+      "edge_ttd_median_ms": 610.0,
+      "edge_ttd_p95_ms": 992.6,
+      "cloud_min_visible_median": 72.0,
+      "cloud_min_visible_min": 59.0,
       "cloud_min_visible_max": 85.0
     },
     "k3s": {
@@ -488,10 +488,10 @@
       "edge_localized_pct": 100.0,
       "cloud_blind_in_cut": 29,
       "cloud_blind_pct": 100.0,
-      "edge_ttd_median_ms": 679.0,
-      "edge_ttd_p95_ms": 867.3999999999999,
+      "edge_ttd_median_ms": 527.0,
+      "edge_ttd_p95_ms": 943.8,
       "cloud_min_visible_median": 83.0,
-      "cloud_min_visible_min": 78.0,
+      "cloud_min_visible_min": 75.0,
       "cloud_min_visible_max": 88.0
     },
     "openstack": {
@@ -501,8 +501,8 @@
       "edge_localized_pct": 100.0,
       "cloud_blind_in_cut": 29,
       "cloud_blind_pct": 100.0,
-      "edge_ttd_median_ms": 658.0,
-      "edge_ttd_p95_ms": 975.5999999999999,
+      "edge_ttd_median_ms": 589.0,
+      "edge_ttd_p95_ms": 936.5999999999999,
       "cloud_min_visible_median": 83.0,
       "cloud_min_visible_min": 78.0,
       "cloud_min_visible_max": 88.0
@@ -520,5 +520,22 @@
       "cloud_min_visible_min": 78.0,
       "cloud_min_visible_max": 88.0
     }
+  },
+  "field_link": {
+    "trial": "single uncontrolled degraded-link field trial (real WiFi, logged throughout)",
+    "culprit": "validate",
+    "link_loss_pct": 45.5,
+    "rtt_ms_min": 85,
+    "rtt_ms_median": 90,
+    "rtt_ms_max": 212,
+    "rtt_jitter_ms": 16,
+    "cloud_status_polls": 46,
+    "cloud_reachable_pct": 41.3,
+    "cloud_reachable_time_s_median": 1.27,
+    "cloud_max_visible_of_7": 3,
+    "cloud_localized": false,
+    "edge_localized": true,
+    "edge_localization_samples": 91,
+    "note": "One uncontrolled degraded-link field trial over a real WiFi link, logged throughout. The edge collector localizes the culprit locally while the cloud collector, reached over the degraded link, is starved and does not localize. Not reproduced by `make reproduce` (it needs a real degraded uplink); the raw trace is committed as results/production_field_link_*."
   }
 }

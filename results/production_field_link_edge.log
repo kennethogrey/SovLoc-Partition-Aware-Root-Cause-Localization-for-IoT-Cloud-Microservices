@@ -1,0 +1,114 @@
+[edge] healthy, waiting for an injection
+[edge] collector listening on 0.0.0.0:7001
+[edge] t+  1.5s  top-1=none            culprit(none)=n/a          visible=0/7
+[edge] t+  3.5s  top-1=none            culprit(none)=n/a          visible=0/7
+[edge] t+  5.5s  top-1=none            culprit(none)=n/a          visible=0/7
+[edge] t+  7.5s  top-1=none            culprit(none)=n/a          visible=0/7
+[edge] top-1 = device-registry (score 0.5593)
+[edge] top-1 = store (score 0.3851)
+[edge] top-1 = device-registry (score 0.4159)
+[edge] t+  9.5s  top-1=device-registry culprit(none)=n/a          visible=7/7
+[edge] top-1 = alerting (score 0.3436)
+[edge] top-1 = store (score 0.3067)
+[edge] top-1 = device-registry (score 0.3493)
+[edge] top-1 = alerting (score 0.3422)
+[edge] t+ 11.5s  top-1=alerting        culprit(none)=n/a          visible=7/7
+[edge] top-1 = store (score 0.2986)
+[edge] top-1 = alerting (score 0.5026)
+[edge] now expecting culprit = validate
+[edge] top-1 = ingest (score 0.4235)
+[edge] top-1 = store (score 0.3878)
+[edge] t+ 13.5s  top-1=store           culprit(validate)=rank 2       visible=7/7
+[edge] top-1 = validate (score 0.3976)
+[edge] LOCALIZATION_TIME_MS 895  (culprit=validate)
+[edge] t+ 15.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 17.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 19.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 21.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 23.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 25.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 27.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 29.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 31.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 33.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 35.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 37.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 39.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 41.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 43.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 45.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 47.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 49.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 51.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 53.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 55.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 57.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 59.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 61.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 63.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 65.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 67.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 69.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 71.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 73.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 75.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 77.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 79.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 81.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 83.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 85.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 87.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 89.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 91.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 93.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 95.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 97.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+ 99.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+101.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+103.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+105.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+107.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+109.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+111.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+113.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+115.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+117.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+119.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+121.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+123.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+125.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+127.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+129.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+131.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+133.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+135.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+137.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+139.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+141.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+143.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+145.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+147.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+149.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+151.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+153.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+155.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+157.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+159.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+161.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+163.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+165.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+167.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+169.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+171.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+173.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+175.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+177.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+179.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+181.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+183.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+185.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+187.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+189.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+191.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+193.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7
+[edge] t+195.5s  top-1=validate        culprit(validate)=rank 1       visible=7/7

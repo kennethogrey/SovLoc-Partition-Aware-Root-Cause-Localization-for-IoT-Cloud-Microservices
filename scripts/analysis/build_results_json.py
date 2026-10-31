@@ -174,6 +174,63 @@ def summarize_tier(path):
     }
 
 
+def summarize_field_link(ping_path, http_path, status_path, edge_path):
+    """One uncontrolled degraded-link field trial (not part of `make reproduce`;
+    it needs a real degraded uplink). The edge collector runs locally over TCP
+    while the cloud collector is reached over the real degraded link; the raw
+    trace is committed as results/production_field_link_* so this block
+    regenerates. It shows the edge-local placement holding the diagnosis while the
+    central/cloud placement is starved by the link.
+    """
+    if not all(p.exists() for p in (ping_path, http_path, status_path, edge_path)):
+        return None
+    # Link quality from the ping trace (RTT + loss against a reachable reference).
+    rtts, lost = [], 0
+    for line in ping_path.read_text(errors="ignore").splitlines():
+        if "time=" in line:
+            try:
+                rtts.append(float(line.split("time=")[1].split()[0]))
+            except (ValueError, IndexError):
+                pass
+        elif "no answer yet" in line:
+            lost += 1
+    got = len(rtts)
+    loss_pct = round(100.0 * lost / (got + lost), 1) if (got + lost) else None
+    # Cloud reachability over the link (HTTP /status once per second).
+    http_rows = read_csv(http_path)
+    ok = [r for r in http_rows if r.get("http_code") == "200"]
+    reach_pct = round(100.0 * len(ok) / len(http_rows), 1) if http_rows else None
+    ok_times = [fnum(r.get("time_total_s")) for r in ok if fnum(r.get("time_total_s")) is not None]
+    # Cloud localization and visibility over the link (from the polled /status).
+    st_rows = read_csv(status_path)
+    vis = [fnum(r.get("visible")) for r in st_rows if fnum(r.get("visible")) is not None]
+    cloud_localized = any(r.get("localized_ms") not in (None, "", "null") for r in st_rows)
+    # Edge localization: held the injected culprit at rank 1 locally throughout.
+    edge_hits = sum(1 for l in edge_path.read_text(errors="ignore").splitlines()
+                    if "culprit(" in l and "=rank 1" in l)
+    return {
+        "trial": "single uncontrolled degraded-link field trial (real WiFi, logged throughout)",
+        "culprit": "validate",
+        "link_loss_pct": loss_pct,
+        "rtt_ms_min": round(min(rtts)) if rtts else None,
+        "rtt_ms_median": round(st.median(rtts)) if rtts else None,
+        "rtt_ms_max": round(max(rtts)) if rtts else None,
+        "rtt_jitter_ms": round(st.pstdev(rtts)) if len(rtts) > 1 else None,
+        "cloud_status_polls": len(http_rows),
+        "cloud_reachable_pct": reach_pct,
+        "cloud_reachable_time_s_median": round(st.median(ok_times), 2) if ok_times else None,
+        "cloud_max_visible_of_7": int(max(vis)) if vis else None,
+        "cloud_localized": cloud_localized,
+        "edge_localized": edge_hits > 0,
+        "edge_localization_samples": edge_hits,
+        "note": "One uncontrolled degraded-link field trial over a real WiFi link, logged "
+                "throughout. The edge collector localizes the culprit locally while the cloud "
+                "collector, reached over the degraded link, is starved and does not localize. "
+                "Not reproduced by `make reproduce` (it needs a real degraded uplink); the raw "
+                "trace is committed as results/production_field_link_*.",
+    }
+
+
 def main():
     mac = parse_macros(A / "numbers.tex")
     energy = parse_energy(A / "energy.txt")
@@ -316,6 +373,12 @@ def main():
             tier: summarize_tier(P / "production" / f"{tier}.csv")
             for tier in ["single-node-mesh", "k3s", "openstack", "cranecloud"]
         },
+        "field_link": summarize_field_link(
+            P / "production_field_link_ping.log",
+            P / "production_field_link_http.csv",
+            P / "production_field_link_status.csv",
+            P / "production_field_link_edge.log",
+        ),
     }
 
     out = P / "results.json"
